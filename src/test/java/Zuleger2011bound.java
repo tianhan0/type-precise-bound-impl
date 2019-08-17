@@ -3,7 +3,7 @@
  */
 abstract public class Zuleger2011bound {
     abstract boolean nonDet();
-    abstract int nonDet2();
+    abstract int nonDetInt();
 
     void Ex1(int n) {
         int i=0;
@@ -26,11 +26,11 @@ abstract public class Zuleger2011bound {
 
     void bin_search_StepSize2(int r, int s) {
         int c=4;
-        int n=nonDet2();
+        int n= nonDetInt();
         boolean f=false;
         int d=0;
         while (c!=1 && s<=255 && s>=0 && n!=r) {
-            n = nonDet2();
+            n = nonDetInt();
             if (f) {
                 c=c/2;
             }

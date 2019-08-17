@@ -1,5 +1,3 @@
-import java.util.Random;
-
 /**
  * @author Tianhan Lu
  */
@@ -119,17 +117,75 @@ public abstract class Gulwani2010reachability {
         int j=n+1;
         int R1=0;
         int R2=0;
-        while (j<n || j>n) {
+        while (j<n || j>n) { // j!=n
             if (j>m) {
                 j=0;
                 R1=R1+1;
-                // {}
             } else {
+                // j0
                 j=j+1;
                 R2=R2+1;
-                // {}
+                // {j-R2=j0 and j0<=m and (j0>n or j0<n) and j<=m and (j>n or j<n)} => R2<m
             }
         }
-        // Bound: R1+R2<
+        // Global invariant: j>=0
+        // Bound: R2<m
+    }
+
+    void Ex8() {
+        int x=0;
+        int y=0;
+        while (nonDet()) {
+            if (x!=50) {
+                y++;
+            } else {
+                y--;
+            }
+            if (y<0) break;
+            x=x+1;
+        }
+        // Bound: x=102
+    }
+
+    void Ex9() {
+        int x=0;
+        int y=50;
+        while (x<100) {
+            if (x<50) {
+                x=x+1;
+            } else {
+                x=x+1;
+                y=y+1; // Consider y as resource consumption
+                // {y-x=50-x0 and 100>x0>=50 and 100>x>=50}
+            }
+        }
+        // Bound: y<=100
+    }
+
+    void Ex10(int x, int y) {
+        assert (x!=y);
+        boolean lock=false;
+        while (x!=y) {
+            lock=true;
+            x=y;
+            if (nonDet()) {
+                lock=false;
+                y=y+1;
+            }
+        }
+    }
+
+    void Ex11(int N) {
+        int x=0;
+        int upd=0;
+        int l;
+        while (x<N) {
+            if (nonDet()) {
+                l=x;
+                upd=1;
+            }
+            x=x+1;
+        }
+        // Bound: l<N
     }
 }
