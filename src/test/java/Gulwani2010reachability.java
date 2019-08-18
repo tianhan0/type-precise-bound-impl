@@ -121,6 +121,7 @@ public abstract class Gulwani2010reachability {
             if (j>m) {
                 j=0;
                 R1=R1+1;
+                // {R1=1}: Verification relies on loop invariant of keeping executing line 125
             } else {
                 // j0
                 j=j+1;
