@@ -21,7 +21,7 @@ public abstract class Gulwani2010reachability {
             }
             i=i+1;
         }
-        // Global invariant: n>0
+        // Global invariant: n>=0
         // Bound: R≤n0+1
     }
 
@@ -121,12 +121,12 @@ public abstract class Gulwani2010reachability {
             if (j>m) {
                 j=0;
                 R1=R1+1;
-                // {R1=1}: Verification relies on loop invariant of keeping executing line 125
+                // {R1=1}: Verification relies on the loop invariant of keeping executing line 125: Will not visit this location again
             } else {
-                // j0
+                // j0, R20
                 j=j+1;
                 R2=R2+1;
-                // {j-R2=j0 and j0<=m and (j0>n or j0<n) and j<=m and (j>n or j<n)} => R2<m
+                // {j-R2=j0-R20 and j0<=m and (j0>n or j0<n) and j<=m and (j>n or j<n)}
             }
         }
         // Global invariant: j>=0

@@ -25,26 +25,26 @@ abstract public class Zuleger2011bound {
     }
 
     void bin_search_StepSize2(int r, int s) {
-        int c=4;
+        int c=4; // log2c=2
         int n= nonDetInt();
         boolean f=false;
         int d=0;
-        while (c!=1 && s<=255 && s>=0 && n!=r) {
+        while (c!=1 && s<=255 && s>=0 && n!=r) { // log2c!=0
             n = nonDetInt();
             if (f) {
-                c=c/2;
+                c=c/2; // log2c--;
             }
             if (n>r) {
                 if (d==1 && !f) {
                     f=true;
-                    c=c/2;
+                    c=c/2; // log2c--;
                 }
                 d=2;
                 s=s+c;
             } else if (n<r) {
                 if (d==2 && !f) {
                     f=true;
-                    c=c/2;
+                    c=c/2; // log2c--;
                 }
                 d=1;
                 s=s-c;
