@@ -24,7 +24,7 @@ abstract class AlgSkeleton(program: Graph, trans: Node=>Pred=>Pred) {
   }
 
   def getLoopInv(loop: Mscc): Set[Pred] = {
-
+    ???
   }
 
   /**
