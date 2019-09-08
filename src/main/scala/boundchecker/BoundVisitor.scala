@@ -1,11 +1,12 @@
 package boundchecker
 
-import com.sun.source.tree.{AssertTree, AssignmentTree, MethodTree, VariableTree}
+import analysis.Invariant
+import com.sun.source.tree.{AssignmentTree, MethodTree}
 import org.checkerframework.common.basetype.{BaseAnnotatedTypeFactory, BaseTypeChecker, BaseTypeVisitor}
 import org.checkerframework.dataflow.cfg.CFGBuilder
-import org.checkerframework.dataflow.cfg.block.{ConditionalBlock, ExceptionBlock, RegularBlock, SpecialBlock}
+import org.checkerframework.dataflow.cfg.block.RegularBlock
 import org.checkerframework.javacutil.TreeUtils
-import utils.{MyCFG, PrintStuff}
+import utils.{GraphUtil, MyCFG, PrintStuff}
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.HashMap
@@ -16,9 +17,10 @@ import scala.util.matching.Regex
 /**
   * @author Tianhan Lu
   */
-class BoundVisitor (checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotatedTypeFactory](checker) {
-  var resVarRegex: Regex = """R(\d+)""".r
+class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotatedTypeFactory](checker) {
+  var resVarRegex: Regex = """R(\d*)""".r
   var cfgs = new HashMap[MethodTree, MyCFG]()
+  val DEBUG = true
 
   override def visitMethod(node: MethodTree, p: Void): Void = {
     val treePath = atypeFactory.getPath(node)
@@ -28,13 +30,12 @@ class BoundVisitor (checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnota
       val cfg = CFGBuilder.build(treePath.getCompilationUnit, node, classTree, checker.getContext.getProcessingEnvironment)
       val myCFG = MyCFG(cfg)
       cfgs += node -> myCFG
-      // GraphUtil.printCFGtoPDF(cfg, "/Users/lumber/Desktop")
-      myCFG.cycles.foreach(cycle => println(cycle.size, cycle.map(b => b.getId)))
+      if (node.getName.toString != "_init") GraphUtil.printCFGtoPDF(cfg, "/Users/lumber/Desktop")
     } catch {
       case ex: Exception =>
-        PrintStuff.printRedString("[Exception] Generate CFG for method: "+TreeUtils.elementFromTree(node).getSimpleName)
+        PrintStuff.printRedString("[Exception] Generate CFG for method: " + TreeUtils.elementFromTree(node).getSimpleName)
         ex.getStackTrace.slice(0, 3).foreach(e => println(e))
-        // ex.printStackTrace()
+      // ex.printStackTrace()
     }
     super.visitMethod(node, p)
   }
@@ -46,29 +47,25 @@ class BoundVisitor (checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnota
     resVarRegex.findFirstIn(node.getVariable.toString) match {
       case Some(resVarName) =>
         cfgs.get(enclosingMethod) match {
-          case Some(cfg) =>
-            cfg.cfg.getAllBlocks.asScala.foreach({
-              case reg: RegularBlock =>
-                reg.getContents.asScala.foreach(n => {
-                  n.getTree match {
-                    case tree: VariableTree =>
-                    case tree: AssignmentTree =>
-                      // println(tree)
-                    case tree: AssertTree =>
-                      // println(tree)
-                    case _ =>
-                  }
-                })
-                // if (!reg.isEmpty) println()
-              case cond: ConditionalBlock =>
-                // println(cond.getThenFlowRule)
-              case special: SpecialBlock =>
-              case exception: ExceptionBlock =>
-              case _ => assert(false)
+          case Some(myCFG) =>
+            val blocks = myCFG.graph.vertexSet().asScala.filter({
+              case reg: RegularBlock => reg.getContents.asScala.zipWithIndex.exists({
+                case (n, idx) =>
+                  if (n.getTree == node) {
+                    if (idx != reg.getContents.size() - 1)
+                      PrintStuff.assertFalse("Resource instruction ["+node.toString+"] must be at the end of a block!")
+                    true
+                  } else false
+              })
+              case _ => false
             })
-          case None =>
+            if (blocks.size != 1) PrintStuff.assertFalse("Multiple/None blocks contain a same resource instruction!")
+            val curBlock = blocks.head.asInstanceOf[RegularBlock]
+            if (DEBUG) println(curBlock.getId)
+            Invariant.inferLocalInv(curBlock, myCFG.graph)
+          case None => // There is no CFG for the enclosing method
         }
-      case None =>
+      case None => // This is not an assignment updating resource variables
     }
     super.visitAssignment(node, p)
   }

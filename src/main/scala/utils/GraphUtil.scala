@@ -3,7 +3,9 @@ package utils
 import java.io.IOException
 import java.util
 
+import com.sun.source.tree.{AssertTree, AssignmentTree, MethodInvocationTree, VariableTree}
 import org.checkerframework.dataflow.cfg.block._
+import org.checkerframework.dataflow.cfg.node.Node
 import org.checkerframework.dataflow.cfg.{ControlFlowGraph, DOTCFGVisualizer}
 import org.jgrapht.Graph
 import org.jgrapht.alg.connectivity.KosarajuStrongConnectivityInspector
@@ -23,11 +25,11 @@ object GraphUtil {
     nodes.foreach(node => graph.addVertex(node))
     nodes.foreach({
       case reg: RegularBlock => graph.addEdge(reg, reg.getRegularSuccessor)
-        // println(reg.getId, reg.getRegularSuccessor.getId)
+      // println(reg.getId, reg.getRegularSuccessor.getId)
       case cond: ConditionalBlock =>
         graph.addEdge(cond, cond.getThenSuccessor)
         graph.addEdge(cond, cond.getElseSuccessor)
-        // println(cond.getId, cond.getElseSuccessor.getId, cond.getThenSuccessor.getId)
+      // println(cond.getId, cond.getElseSuccessor.getId, cond.getThenSuccessor.getId)
       case special: SpecialBlock =>
         graph.addVertex(special)
         if (special.getSuccessor != null) {
@@ -50,10 +52,7 @@ object GraphUtil {
   def getAllSimpleCycles[V, E](directedGraph: DefaultDirectedGraph[V, E]): Set[List[V]] = {
     val jAlg = new JohnsonSimpleCycles(directedGraph)
     val cycles = jAlg.findSimpleCycles()
-    cycles.asScala.toSet.map({
-        cycle: java.util.List[V] => cycle.asScala.toList
-      }
-    )
+    cycles.asScala.toSet.map({ cycle: java.util.List[V] => cycle.asScala.toList })
   }
 
   def getSCCs[V, E](directedGraph: DefaultDirectedGraph[V, E]): Set[Graph[V, E]] = {
@@ -82,11 +81,30 @@ object GraphUtil {
         System.exit(1)
     }
   }
+
+  def getInterestingStmts(block: Block): List[Node] = {
+    block match {
+      case reg: RegularBlock =>
+        reg.getContents.asScala.foldLeft(List[Node]())(
+          (acc, n) => {
+            n.getTree match {
+              case tree@(_: VariableTree | _: AssignmentTree | _: AssertTree | _: MethodInvocationTree) => n :: acc
+              case _ => acc
+            }
+          }
+        )
+      case cond: ConditionalBlock => List[Node]()
+      // println(cond.getThenFlowRule)
+      case special: SpecialBlock => List[Node]()
+      case exception: ExceptionBlock => List[Node]()
+      case _ => assert(false); List[Node]()
+    }
+  }
 }
 
 case class MyCFG(cfg: ControlFlowGraph) {
   val graph: DefaultDirectedGraph[Block, DefaultEdge] = GraphUtil.cfgToJgraphtGraph(cfg)
-  val cycles: Set[List[Block]] = GraphUtil.getAllSimpleCycles(graph)
+  val simCycles: Set[List[Block]] = GraphUtil.getAllSimpleCycles(graph)
 }
 
 // References

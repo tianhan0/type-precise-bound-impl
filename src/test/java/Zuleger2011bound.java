@@ -8,12 +8,14 @@ abstract public class Zuleger2011bound {
     void Ex1(int n) {
         int i=0;
         int j;
+        int R=0;
         while(i<n) {
             i=i+1;
             j=0;
             while(i<n && nonDet()) {
                 i=i+1;
                 j=j+1;
+                R=R+1;
                 // {R≤i}
             }
             if (j>0) {
@@ -24,7 +26,7 @@ abstract public class Zuleger2011bound {
         // Bound: R<n
     }
 
-    void bin_search_StepSize2(int r, int s) {
+    /*void bin_search_StepSize2(int r, int s) {
         int c=4; // log2c=2
         int n= nonDetInt();
         boolean f=false;
@@ -50,5 +52,5 @@ abstract public class Zuleger2011bound {
                 s=s-c;
             }
         }
-    }
+    }*/
 }

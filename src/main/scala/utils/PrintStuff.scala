@@ -35,4 +35,6 @@ object PrintStuff {
   def printPercentage(d: Double): Unit = print(("%.3f" format d) + "%")
 
   def getPercentage(d: Double): String = ("%.3f" format d * 100) + "%"
+
+  def assertFalse(str: String): Unit = { PrintStuff.printRedString(str); assert(false) }
 }
