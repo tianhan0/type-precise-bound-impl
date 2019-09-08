@@ -15,6 +15,7 @@ abstract class BreakParagraphs {
                     m=m+r;
                 } else {
                     R1=R1+m;
+                    assert (i<=n);
                     // R1<=i, i<=n
                     m=0;
                 }

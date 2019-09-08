@@ -153,16 +153,20 @@ method ex6(n: int, x: int, z: int)
     var x_ := x;
     var z_ := z;
     while x_<n
+      invariant (x_>n && R1==0) || (x_<=n && R1==x_-x)
+      invariant R2==z_-z
+      invariant (R2==0) || (R2>0)
     {
         if (z_>x_) {
             x_ := x_+1;
             R1 := R1+1;
             assert R1==x_-x;
         } else {
-            z=z+1;
-            R2=R2+1;
+            z_ := z_+1;
+            R2 := R2+1;
             assert R2==z_-z;
         }
     }
-    assert R1+R2<=n-x+n-y; // Bound
+    assert (R1==0) || (R1<=n-x); // Bound 1
+    //assert (R2==0) || ()
 }
