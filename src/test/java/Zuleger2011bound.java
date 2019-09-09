@@ -12,6 +12,7 @@ abstract public class Zuleger2011bound {
         while(i<n) {
             i=i+1;
             j=0;
+            int k=0;
             while(i<n && nonDet()) {
                 i=i+1;
                 j=j+1;

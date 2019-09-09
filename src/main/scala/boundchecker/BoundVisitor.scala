@@ -1,6 +1,6 @@
 package boundchecker
 
-import analysis.Invariant
+import analysis.{Invariant, Z3Solver}
 import com.sun.source.tree.{AssignmentTree, MethodTree}
 import org.checkerframework.common.basetype.{BaseAnnotatedTypeFactory, BaseTypeChecker, BaseTypeVisitor}
 import org.checkerframework.dataflow.cfg.CFGBuilder
@@ -20,7 +20,7 @@ import scala.util.matching.Regex
 class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotatedTypeFactory](checker) {
   var resVarRegex: Regex = """R(\d*)""".r
   var cfgs = new HashMap[MethodTree, MyCFG]()
-  val DEBUG = true
+  val DEBUG_VISIT_ASSIGN = false
 
   override def visitMethod(node: MethodTree, p: Void): Void = {
     val treePath = atypeFactory.getPath(node)
@@ -61,8 +61,9 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
             })
             if (blocks.size != 1) Utils.assertFalse("Multiple/None blocks contain a same resource instruction!")
             val curBlock = blocks.head.asInstanceOf[RegularBlock]
-            if (DEBUG) println(curBlock.getId)
-            Invariant.inferLocalInv(curBlock, myCFG.graph)
+            if (DEBUG_VISIT_ASSIGN) println("Visiting assignment in block: " + curBlock.getId)
+
+            Invariant.inferLocalInv(curBlock, myCFG.graph, new Z3Solver)
           case None => // There is no CFG for the enclosing method
         }
       case None => // This is not an assignment updating resource variables
