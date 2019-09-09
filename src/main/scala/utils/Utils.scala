@@ -3,7 +3,7 @@ package utils
 /**
   * @author Tianhan Lu
   */
-object PrintStuff {
+object Utils {
   def printRedString(s: String): Unit = println(Console.RED + s + Console.BLACK)
 
   def printRedString(o: Object): Unit = println(Console.RED + o.toString + Console.BLACK)
@@ -36,5 +36,26 @@ object PrintStuff {
 
   def getPercentage(d: Double): String = ("%.3f" format d * 100) + "%"
 
-  def assertFalse(str: String): Unit = { PrintStuff.printRedString(str); assert(false) }
+  def assertFalse(str: String): Unit = { Utils.printRedString(str); assert(false) }
+
+  val NANO = 1000000000
+
+  val MILLION = 1000000
+
+  def genRandStr(len: Int=4): String = {
+    assert(len>0)
+    val r = new scala.util.Random()
+    // val res = for (i <- 0 to r.nextInt(len)+1) yield r.nextPrintableChar
+    var i = 0
+    var res = ""
+    while (i<len) {
+      val ch = r.nextPrintableChar
+      // if ((ch>='a' && ch<='z') || (ch>='A' && ch<='Z') || (ch>='0' && ch<='9')) {
+      if (ch>='a' && ch<='z') {
+        res = res + ch.toString
+        i += 1
+      }
+    }
+    res.foldLeft(""){ (acc, ch) => acc+ch }
+  }
 }

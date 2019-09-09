@@ -6,7 +6,7 @@ import org.checkerframework.common.basetype.{BaseAnnotatedTypeFactory, BaseTypeC
 import org.checkerframework.dataflow.cfg.CFGBuilder
 import org.checkerframework.dataflow.cfg.block.RegularBlock
 import org.checkerframework.javacutil.TreeUtils
-import utils.{GraphUtil, MyCFG, PrintStuff}
+import utils.{GraphUtil, MyCFG, Utils}
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.HashMap
@@ -33,7 +33,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
       if (node.getName.toString != "_init") GraphUtil.printCFGtoPDF(cfg, "/Users/lumber/Desktop")
     } catch {
       case ex: Exception =>
-        PrintStuff.printRedString("[Exception] Generate CFG for method: " + TreeUtils.elementFromTree(node).getSimpleName)
+        Utils.printRedString("[Exception] Generate CFG for method: " + TreeUtils.elementFromTree(node).getSimpleName)
         ex.getStackTrace.slice(0, 3).foreach(e => println(e))
       // ex.printStackTrace()
     }
@@ -53,13 +53,13 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
                 case (n, idx) =>
                   if (n.getTree == node) {
                     if (idx != reg.getContents.size() - 1)
-                      PrintStuff.assertFalse("Resource instruction ["+node.toString+"] must be at the end of a block!")
+                      Utils.assertFalse("Resource instruction ["+node.toString+"] must be at the end of a block!")
                     true
                   } else false
               })
               case _ => false
             })
-            if (blocks.size != 1) PrintStuff.assertFalse("Multiple/None blocks contain a same resource instruction!")
+            if (blocks.size != 1) Utils.assertFalse("Multiple/None blocks contain a same resource instruction!")
             val curBlock = blocks.head.asInstanceOf[RegularBlock]
             if (DEBUG) println(curBlock.getId)
             Invariant.inferLocalInv(curBlock, myCFG.graph)
