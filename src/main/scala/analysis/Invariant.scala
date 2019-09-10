@@ -60,7 +60,7 @@ object Invariant {
                 reg.getContents.asScala.foldLeft(z3Solver.mkTrue())(
                   (accPred, node) => {
                     if (node.getTree != null) {
-                      val newPred = PredTrans.wlp(node.getTree, accPred, z3Solver)
+                      val newPred = PredTrans.wlp(node, accPred, z3Solver)
                       // println(newPred)
                       newPred
                     }

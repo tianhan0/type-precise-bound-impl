@@ -3,9 +3,7 @@ package utils
 import java.io.IOException
 import java.util
 
-import com.sun.source.tree.{AssertTree, AssignmentTree, MethodInvocationTree, VariableTree}
 import org.checkerframework.dataflow.cfg.block._
-import org.checkerframework.dataflow.cfg.node.Node
 import org.checkerframework.dataflow.cfg.{ControlFlowGraph, DOTCFGVisualizer}
 import org.jgrapht.Graph
 import org.jgrapht.alg.connectivity.KosarajuStrongConnectivityInspector
@@ -79,25 +77,6 @@ object GraphUtil {
       case e@(_: InterruptedException | _: IOException) =>
         e.printStackTrace()
         System.exit(1)
-    }
-  }
-
-  def getInterestingStmts(block: Block): List[Node] = {
-    block match {
-      case reg: RegularBlock =>
-        reg.getContents.asScala.foldLeft(List[Node]())(
-          (acc, n) => {
-            n.getTree match {
-              case tree@(_: VariableTree | _: AssignmentTree | _: AssertTree | _: MethodInvocationTree) => n :: acc
-              case _ => acc
-            }
-          }
-        )
-      case cond: ConditionalBlock => List[Node]()
-      // println(cond.getThenFlowRule)
-      case special: SpecialBlock => List[Node]()
-      case exception: ExceptionBlock => List[Node]()
-      case _ => assert(false); List[Node]()
     }
   }
 }
