@@ -3,10 +3,12 @@ package analysis
 import com.microsoft.z3.{BoolExpr, Expr}
 import com.sun.source.tree._
 import javax.lang.model.`type`.TypeKind
-import org.checkerframework.dataflow.cfg.block.RegularBlock
+import org.checkerframework.dataflow.cfg.block.{Block, RegularBlock}
 import org.checkerframework.dataflow.cfg.node.Node
 import org.checkerframework.javacutil.TreeUtils
+
 import scala.collection.JavaConverters._
+import scala.collection.immutable.HashSet
 
 /**
   * @author Tianhan Lu
@@ -15,7 +17,7 @@ object PredTrans {
   val DEBUG_TRANS_EXPR = false
 
   // Compute the weakest precondition of a given predicate over a given AST node (representing basic statements, instead of compound statements)
-  def wlp(node: Node, pred: BoolExpr, z3Solver: Z3Solver): BoolExpr = {
+  def wlpBasic(node: Node, pred: BoolExpr, z3Solver: Z3Solver): BoolExpr = {
     val tree = node.getTree
     tree match {
       case variableTree: VariableTree =>
@@ -26,7 +28,7 @@ object PredTrans {
           else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
           else {
             assert(false)
-            z3Solver.mkBoolVar(name)
+            z3Solver.mkFalse()
           }
         }
         val expr = transExpr(variableTree.getInitializer, z3Solver)
@@ -40,7 +42,7 @@ object PredTrans {
           else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
           else {
             assert(false)
-            z3Solver.mkBoolVar(name)
+            z3Solver.mkFalse()
           }
         }
         val expr = transExpr(assignmentTree.getExpression, z3Solver)
@@ -51,17 +53,7 @@ object PredTrans {
         
       case expressionTree: ExpressionTree =>
         // If this expression tree is not a parent tree of any trees preceding it in the same basic block
-        val block = node.getBlock.asInstanceOf[RegularBlock].getContents.asScala
-        val idx = block.indexOf(tree)
-        val transOps = node.getTransitiveOperands
-        val shouldVisit = !block.zipWithIndex.exists({
-          case (n, i) =>
-            if (i<idx) {
-              transOps.asScala.exists(op => op == n)
-            }
-            else false
-        })
-
+        val shouldVisit = isTopLevelStmt(node)
         if (shouldVisit) return pred
         expressionTree.getKind match {
           case Tree.Kind.POSTFIX_DECREMENT => z3Solver.mkTrue() // TODO
@@ -80,6 +72,42 @@ object PredTrans {
         
       case _ => pred
     }
+  }
+
+  def isTopLevelStmt(node: Node): Boolean = {
+    val block = node.getBlock.asInstanceOf[RegularBlock].getContents.asScala
+    val idx = block.indexOf(node)
+    val transOps = node.getTransitiveOperands
+    !block.zipWithIndex.exists({
+      case (n, i) =>
+        if (i<idx) {
+          transOps.asScala.exists(op => op == n)
+        }
+        else false
+    })
+  }
+
+  def getTopLevelStmts(block: Block): List[Node] = {
+    block match {
+      case reg: RegularBlock => reg.getContents.asScala.filter(node => isTopLevelStmt(node)).toList
+      case _ => List[Node]()
+    }
+  }
+
+  def wlpLoop(loop: Iterable[Block], loopInv: BoolExpr, pred: BoolExpr, z3Solver: Z3Solver): BoolExpr = {
+    // Get all assigned variables
+    val assignedVars = loop.foldLeft(new HashSet[String])({
+      (acc, block) => getTopLevelStmts(block).foldLeft(acc)({
+        (acc2, node) => node.getTree match {
+          case variableTree: VariableTree => acc2 + variableTree.getName.toString
+          case assignmentTree: AssignmentTree => acc2 + assignmentTree.getVariable.toString
+          case _ => acc2
+        }
+      })
+    })
+
+    // Find loop exit condition
+    ???
   }
 
   // Transform an expression tree into a Z3 expression
