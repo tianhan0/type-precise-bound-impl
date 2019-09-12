@@ -47,14 +47,14 @@ object GraphUtil {
     graph
   }
 
-  def getAllSimpleCycles[V, E](directedGraph: DefaultDirectedGraph[V, E]): Set[List[V]] = {
-    val jAlg = new JohnsonSimpleCycles(directedGraph)
+  def getAllSimpleCycles[V, E](graph: Graph[V, E]): Set[List[V]] = {
+    val jAlg = new JohnsonSimpleCycles(graph)
     val cycles = jAlg.findSimpleCycles()
     cycles.asScala.toSet.map({ cycle: java.util.List[V] => cycle.asScala.toList })
   }
 
-  def getSCCs[V, E](directedGraph: DefaultDirectedGraph[V, E]): Set[Graph[V, E]] = {
-    val scAlg: StrongConnectivityAlgorithm[V, E] = new KosarajuStrongConnectivityInspector[V, E](directedGraph)
+  def getSCCs[V, E](graph: Graph[V, E]): Set[Graph[V, E]] = {
+    val scAlg: StrongConnectivityAlgorithm[V, E] = new KosarajuStrongConnectivityInspector[V, E](graph)
     val stronglyConnectedSubgraphs = scAlg.getStronglyConnectedComponents
     stronglyConnectedSubgraphs.asScala.toSet
   }
@@ -78,6 +78,17 @@ object GraphUtil {
         e.printStackTrace()
         System.exit(1)
     }
+  }
+
+  // A copy of the original graph, where nodes are shallow copied and edges are deep copied
+  def cloneGraph(graph: Graph[Block, DefaultEdge]): Graph[Block, DefaultEdge] = {
+    val newGraph = new DefaultDirectedGraph[Block, DefaultEdge](classOf[DefaultEdge])
+
+    val nodes: Set[Block] = graph.vertexSet().asScala.toSet
+    val edges: Set[DefaultEdge] = graph.edgeSet().asScala.toSet
+    nodes.foreach(node => newGraph.addVertex(node))
+    edges.foreach(edge => newGraph.addEdge(graph.getEdgeSource(edge), graph.getEdgeTarget(edge)))
+    newGraph
   }
 }
 
