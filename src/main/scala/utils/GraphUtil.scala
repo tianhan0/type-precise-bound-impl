@@ -7,7 +7,7 @@ import org.checkerframework.dataflow.cfg.block._
 import org.checkerframework.dataflow.cfg.{ControlFlowGraph, DOTCFGVisualizer}
 import org.jgrapht.Graph
 import org.jgrapht.alg.connectivity.KosarajuStrongConnectivityInspector
-import org.jgrapht.alg.cycle.JohnsonSimpleCycles
+import org.jgrapht.alg.cycle.{CycleDetector, JohnsonSimpleCycles}
 import org.jgrapht.alg.interfaces.StrongConnectivityAlgorithm
 import org.jgrapht.graph.{DefaultDirectedGraph, DefaultEdge}
 
@@ -90,6 +90,8 @@ object GraphUtil {
     edges.foreach(edge => newGraph.addEdge(graph.getEdgeSource(edge), graph.getEdgeTarget(edge)))
     newGraph
   }
+
+  def hasCycle[V, E](graph: Graph[V, E]): Boolean = new CycleDetector(graph).detectCycles()
 }
 
 case class MyCFG(cfg: ControlFlowGraph) {

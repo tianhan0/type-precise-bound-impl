@@ -63,6 +63,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
             val curBlock = blocks.head.asInstanceOf[RegularBlock]
             if (DEBUG_VISIT_ASSIGN) println("Visiting assignment in block: " + curBlock.getId)
 
+            // myCFG.graph.vertexSet().asScala.foreach(b => println(b.getId, b.toString))
             val z3Solver = new Z3Solver
             Invariant.inferLocalInv(curBlock, myCFG.graph, z3Solver.mkTrue(), z3Solver)
           case None => // There is no CFG for the enclosing method

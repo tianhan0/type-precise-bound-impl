@@ -1,43 +1,29 @@
 package analysis
 
 import com.microsoft.z3.BoolExpr
-import org.checkerframework.dataflow.cfg.block.{Block, RegularBlock}
+import org.checkerframework.dataflow.cfg.block.{Block, ConditionalBlock, RegularBlock, SingleSuccessorBlock}
 import org.jgrapht.Graph
 import org.jgrapht.graph.{DefaultDirectedGraph, DefaultEdge}
 import utils.GraphUtil
 
+import scala.collection.JavaConverters._
 import scala.collection.immutable.HashSet
-import collection.JavaConverters._
 
 /**
   * @author Tianhan Lu
   */
 object Invariant {
-  val DEBUG_LOCAL_INV = false
+  val DEBUG_LOCAL_INV = true
 
   // Return the predicate s.t. if it is valid right after the end of the given block, then it will be valid again next time reaching the end of the given block
-  // Why is this Liquid-type-like inference algorithm a contribution? Picking a different entry/exit point (on-demand invariant inference) may reduce
-  // 1. The size of the relevant graph
-  // 2. The need of loop invariants because ???
-  def inferLocalInv(block: RegularBlock,
+  def inferLocalInv(loc: Block,
                     graph: Graph[Block, DefaultEdge],
                     pred: BoolExpr, // The predicate abstracting the context under which invariants need to be inferred
                     z3Solver: Z3Solver,
                     indent: Int = 0): Set[BoolExpr] = {
     val indentStr = " " * indent
-    if (DEBUG_LOCAL_INV) println("\n\n\n" + indentStr + "---Infer invariant right after block: " + block.getId)
-
+    if (DEBUG_LOCAL_INV) println("\n\n\n" + indentStr + "---Infer inference right after block " + loc.getId + " started:")
     val simCycles = GraphUtil.getAllSimpleCycles(graph)
-    val newGraph = GraphUtil.cloneGraph(graph)
-    newGraph.vertexSet().asScala.foreach(
-      {
-        b =>
-          if (b.getId == block.getId) {
-            newGraph.removeEdge(b, b.asInstanceOf[RegularBlock].getRegularSuccessor)
-          }
-      }
-    )
-    val newSimCycles = GraphUtil.getAllSimpleCycles(newGraph)
 
     val invs = genNewInv(z3Solver)
     val validInvs = invs.filter({
@@ -48,96 +34,134 @@ object Invariant {
         z3Solver.checkSAT // TODO: Clear Z3 up?
     }).filter({
       inv =>
-        val wlpInv = simCycles.foldLeft(pred)((acc, simCycle) => {
+        // If for all simple cycles, if the guessed local invariant is valid right after the end of the given block,
+        // then it will be valid again next time reaching the end of the given block,
+        // then the guessed local invariant is valid
+        simCycles.forall(simCycle => {
           if (DEBUG_LOCAL_INV) println("\n" + indentStr + "Simple cycle: " + simCycle.map(b => b.getId))
-          var newInv = acc
-          val idx = simCycle.indexOf(block)
+          var acc = pred
+          val idx = simCycle.indexOf(loc)
           if (idx != -1) {
+            // Remove the edge in the current simple cycle that starts from the given block, preventing visiting
+            // the given block again
+            val nxtBlock = if (idx == simCycle.size - 1) simCycle.head else simCycle(idx + 1)
+            val newGraph = GraphUtil.cloneGraph(graph)
+            newGraph.vertexSet().asScala.foreach(
+              {
+                b =>
+                  if (b.getId == loc.getId) {
+                    b match {
+                      case b: SingleSuccessorBlock =>
+                        if (b.getSuccessor.getId == nxtBlock.getId)
+                          newGraph.removeEdge(b, b.getSuccessor)
+                        else
+                          assert(false, b.toString)
+                      case b: ConditionalBlock =>
+                        if (b.getThenSuccessor.getId == nxtBlock.getId)
+                          newGraph.removeEdge(b, b.getThenSuccessor)
+                        else if (b.getElseSuccessor.getId == nxtBlock.getId)
+                          newGraph.removeEdge(b, b.getElseSuccessor)
+                        else
+                          assert(false, b.toString)
+                      case _ => assert(false, b.toString)
+                    }
+                  }
+              }
+            )
+
             // Backwards traversal
-            var j = if (idx == 0) simCycle.size - 1 else idx - 1
-            while (j != idx) {
+            var j = idx
+            do {
               val curBlock = simCycle(j)
               if (DEBUG_LOCAL_INV) println(indentStr + "  curBlock: " + curBlock.getId)
 
-              val innerLoops = newSimCycles.filter(il => il.contains(curBlock))
-              if (innerLoops.nonEmpty) {
-                val commonNodes: Set[List[Block]] = innerLoops.map(il => il.intersect(simCycle))
-                val maxLoop = commonNodes.max(Ordering[Int].on[List[Block]](l => l.size))
+              // Find out the SCC containing the current block
+              val sccs = GraphUtil.getSCCs(newGraph).filter(graph => graph.vertexSet().asScala.contains(curBlock))
+              assert(sccs.size == 1)
 
-                val idx = maxLoop.map(b => simCycle.indexOf(b))
-                // Find the block that is farthest away from the current block
-                val maxIdx = idx.max(Ordering[Int].on[Int](n => if (n > j) j + (simCycle.size - n) else j - n))
-                val farthestBlk = simCycle(maxIdx)
+              val theSCC = sccs.head
+              // If the SCC contains a loop
+              if (GraphUtil.hasCycle(theSCC)) {
+                // if (DEBUG_LOCAL_INV)  GraphUtil.getAllSimpleCycles(theSCC).foreach(loop => println(indentStr + "" + loop.map(b => b.getId).toString()))
 
-                if (DEBUG_LOCAL_INV) {
-                  println(indentStr + "  Max loop: " + maxLoop.map(b => b.getId))
-                  println(indentStr + "  Farthest block away from j: " + farthestBlk.getId)
+                // The current block must be the loop head, i.e. one of its successor must be outside the loop
+                val loopBody = theSCC.vertexSet()
+                curBlock match {
+                  case b: ConditionalBlock =>
+                    assert(!loopBody.contains(b.getThenSuccessor) || !loopBody.contains(b.getElseSuccessor))
+                  case _ => assert(false)
                 }
 
-                // Find loop invariants for (semantic) inner loops
-                val loopInvs = analysis.Invariant.inferLocalInv(
-                  farthestBlk.asInstanceOf[RegularBlock],
-                  newGraph,
-                  newInv,
+                // Find local invariants for the (semantic) inner loop in the new graph under the context of ??? s.t.
+                // if the invariant is valid right after the loop head, then it will be valid again upon next visit
+                val loopInvs = inferLocalInv(
+                  curBlock,
+                  theSCC,
+                  z3Solver.mkTrue(),
                   z3Solver,
                   indent + 2
                 )
 
-                // Infer the weakest precondition of the loop
+                // Infer the weakest precondition before entering the inner loop
                 if (loopInvs.isEmpty) {
                   // Stop exploration because we cannot find loop invariants and hence cannot compute wlp!
                   return new HashSet[BoolExpr]()
                 }
                 else {
-                  // Find out the MSCC starting at curBlock and ending up at block j, i.e. the whole loop
-                  val sccs = GraphUtil.getSCCs(newGraph)
-                  val theSCC = sccs.filter(graph => graph.vertexSet().asScala.intersect(maxLoop.toSet).nonEmpty)
-                  assert(theSCC.size == 1)
-
-                  val initLoopInvWlp = PredTrans.wlpLoop(theSCC.head, block, farthestBlk, loopInvs.head, newInv, z3Solver)
-                  newInv = loopInvs.tail.foldLeft(initLoopInvWlp)({
+                  val wlpAfterLoop = acc
+                  val initLoopInvWlp = PredTrans.wlpLoop(theSCC, curBlock, loopInvs.head, wlpAfterLoop, z3Solver)
+                  acc = loopInvs.tail.foldLeft(initLoopInvWlp)({
                     (acc, loopInv) =>
-                      // newInv is never modified inside this loop
-                      val loopInvWlp = PredTrans.wlpLoop(theSCC.head, block, farthestBlk, loopInv, newInv, z3Solver)
+                      val loopInvWlp = PredTrans.wlpLoop(theSCC, curBlock, loopInv, wlpAfterLoop, z3Solver)
                       // If any of the inferred inner loop's invariant may work, then we are happy :)
                       z3Solver.mkOr(acc, loopInvWlp)
                   })
                 }
 
-                // Skip the intersecting part
-                j = if (maxIdx == 0) simCycle.size - 1 else maxIdx - 1
-              }
-              else {
-                // Process current block if it is not in any loop
-                newInv = curBlock match {
-                  case reg: RegularBlock =>
-                    assert(reg != null && reg.getContents != null)
-                    reg.getContents.asScala.foldLeft(newInv)(
-                      (accPred, node) => {
-                        if (node.getTree != null) {
-                          // Infer the weakest precondition of the block
-                          val newPred = PredTrans.wlpBasic(node, accPred, z3Solver)
-                          // println(newPred)
-                          newPred
-                        }
-                        else accPred
-                      })
-                  case _ => newInv
+                // Make the inner loop acyclic by removing the edge starting from the current block
+                val toRemove = {
+                  val thenBlk = curBlock.asInstanceOf[ConditionalBlock].getThenSuccessor
+                  val elseBlk = curBlock.asInstanceOf[ConditionalBlock].getElseSuccessor
+                  if (loopBody.contains(thenBlk)) thenBlk
+                  else if (loopBody.contains(elseBlk)) elseBlk
+                  else {
+                    assert(false)
+                    curBlock
+                  }
                 }
-                j = if (j == 0) simCycle.size - 1 else j - 1
+                newGraph.removeEdge(curBlock, toRemove)
               }
-            }
+
+              // Process the current block
+              acc = curBlock match {
+                case reg: RegularBlock =>
+                  assert(reg != null && reg.getContents != null)
+                  reg.getContents.asScala.foldLeft(acc)(
+                    (accPred, node) => {
+                      if (node.getTree != null) {
+                        // Infer the weakest precondition of the block
+                        val newPred = PredTrans.wlpBasic(node, accPred, z3Solver)
+                        // println(newPred)
+                        newPred
+                      }
+                      else accPred
+                    })
+                case _ => acc
+              }
+
+              j = if (j == 0) simCycle.size - 1 else j - 1
+            } while (j != idx)
           }
           else {
-            // Otherwise, the given block is not in the current loop
+            // Otherwise, we do nothing because the given block is not in the current loop --- since this block
+            // will not be visited a second time via this simple cycle, the guessed local invariant is vacuously valid
           }
-          newInv
+          val implication = z3Solver.mkImplies(acc, inv)
+          z3Solver.mkAssert(implication)
+          z3Solver.checkSAT // TODO: Clear Z3 up?
         })
-        val implication = z3Solver.mkImplies(wlpInv, inv)
-        z3Solver.mkAssert(implication)
-        z3Solver.checkSAT // TODO: Clear Z3 up?
     })
-    if (DEBUG_LOCAL_INV) println(indentStr + "---Invariant inferred right after block: " + block.getId)
+    if (DEBUG_LOCAL_INV) println(indentStr + "---Invariant inference right after block " + loc.getId + " finishes.")
     validInvs
   }
 
