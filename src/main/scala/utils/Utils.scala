@@ -1,9 +1,15 @@
 package utils
 
+import java.io.File
+
 /**
   * @author Tianhan Lu
   */
 object Utils {
+  val SEPARATOR: String = File.separator
+  val DESKTOP_PATH: String = System.getProperty("user.home") + SEPARATOR + "Desktop"
+  val OUTPUT_DIR: String = DESKTOP_PATH + SEPARATOR + "outputs"
+
   def printRedString(s: String): Unit = println(Console.RED + s + Console.BLACK)
 
   def printRedString(o: Object): Unit = println(Console.RED + o.toString + Console.BLACK)

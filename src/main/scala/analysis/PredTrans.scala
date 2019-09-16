@@ -19,8 +19,8 @@ import scala.collection.immutable.{HashMap, HashSet}
 // Weakest precondition computation over a graph, instead of an AST
 object PredTrans {
   val DEBUG_TRANS_EXPR = false
-  val DEBUG_WLP_LOOP = true
-  val DEBUG_WLP_PROG = true
+  val DEBUG_WLP_LOOP = false
+  val DEBUG_WLP_PROG = false
 
   // Compute the weakest precondition of a given predicate over a given AST node (representing basic statements, instead of compound statements)
   def wlpBasic(node: Node, pred: BoolExpr, z3Solver: Z3Solver): BoolExpr = {
@@ -42,7 +42,7 @@ object PredTrans {
         val expr = transExpr(variableTree.getInitializer, z3Solver)
         pred.substitute(x, expr).asInstanceOf[BoolExpr]
 
-      case assignmentTree: AssignmentTree =>
+      case assignmentTree: AssignmentTree => // Note that this is subtype of ExpressionTree
         val x = {
           val name = assignmentTree.getVariable.toString
           val typ = TreeUtils.typeOf(assignmentTree.getVariable)
@@ -67,7 +67,12 @@ object PredTrans {
           case Tree.Kind.POSTFIX_INCREMENT => ??? // TODO
           case _ =>
             val typ = TreeUtils.typeOf(expressionTree)
-            if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkAnd(transExpr(expressionTree, z3Solver), pred)
+            if (typ.getKind == TypeKind.BOOLEAN) {
+              // Do nothing here. We should especially not consider boolean-typed expressions,
+              // because they are conditionals and should be handled by getBranchCond.
+              // z3Solver.mkAnd(transExpr(expressionTree, z3Solver), pred)
+              pred
+            }
             else if (typ.getKind == TypeKind.INT) {
               assert(false, tree.toString)
               z3Solver.mkFalse()
@@ -275,7 +280,7 @@ object PredTrans {
           (acc2, node) =>
             node.getTree match {
               case variableTree: VariableTree =>
-                acc2 + ((variableTree.getName.toString, TreeUtils.typeOf(variableTree.getInitializer)))
+                acc2 + ((variableTree.getName.toString, TreeUtils.typeOf(variableTree.getType)))
               case assignmentTree: AssignmentTree =>
                 acc2 + ((assignmentTree.getVariable.toString, TreeUtils.typeOf(assignmentTree.getVariable)))
               case _ => acc2

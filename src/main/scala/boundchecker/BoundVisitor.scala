@@ -1,12 +1,11 @@
 package boundchecker
 
-import java.io.File
-
 import analysis.{Invariant, Z3Solver}
 import com.sun.source.tree.{AssignmentTree, MethodTree}
 import org.checkerframework.common.basetype.{BaseAnnotatedTypeFactory, BaseTypeChecker, BaseTypeVisitor}
 import org.checkerframework.dataflow.cfg.CFGBuilder
 import org.checkerframework.dataflow.cfg.block.RegularBlock
+import org.checkerframework.framework.source.Result
 import org.checkerframework.javacutil.TreeUtils
 import utils.{GraphUtil, MyCFG, Utils}
 
@@ -23,9 +22,6 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   var resVarRegex: Regex = """R(\d*)""".r
   var cfgs = new HashMap[MethodTree, MyCFG]()
   val DEBUG_VISIT_ASSIGN = false
-  val SEPARATOR = File.separator
-  val DESKTOP_PATH = System.getProperty("user.home") + SEPARATOR + "Desktop"
-  val OUTPUT_DIR = DESKTOP_PATH + SEPARATOR + "outputs"
 
   override def visitMethod(node: MethodTree, p: Void): Void = {
     val treePath = atypeFactory.getPath(node)
@@ -36,8 +32,8 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
       val myCFG = MyCFG(cfg)
       cfgs += node -> myCFG
       if (node.getName.toString != "<init>") {
-        GraphUtil.printCFGtoPDF(cfg, OUTPUT_DIR)
-        GraphUtil.printGraphtoPDF(myCFG.graph, OUTPUT_DIR + SEPARATOR + classTree.getSimpleName + "_" + node.getName.toString)
+        // GraphUtil.printCFGtoPDF(cfg, Utils.OUTPUT_DIR)
+        GraphUtil.printGraphtoPDF(myCFG.graph, Utils.OUTPUT_DIR + Utils.SEPARATOR + classTree.getSimpleName + "_" + node.getName.toString)
       }
     } catch {
       case ex: Exception =>
@@ -73,11 +69,16 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
 
             // GraphUtil.printGraph(myCFG.graph)
             val z3Solver = new Z3Solver
-            Invariant.inferLocalInv(curBlock, myCFG.graph, z3Solver.mkTrue(), z3Solver)
+            val invs = Invariant.inferLocalInv(curBlock, myCFG.graph, z3Solver.mkTrue(), z3Solver)
+            invs.foreach(b => issueWarning(node, "Local invariant inferred: " + b.toString))
           case None => // There is no CFG for the enclosing method
         }
       case None => // This is not an assignment updating resource variables
     }
     super.visitAssignment(node, p)
+  }
+
+  private def issueWarning(node: Object, msg: String): Unit = {
+    checker.report(Result.warning(msg), node)
   }
 }

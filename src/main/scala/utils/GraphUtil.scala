@@ -134,7 +134,7 @@ object GraphUtil {
 
 case class MyCFG(cfg: ControlFlowGraph) {
   val graph: DefaultDirectedGraph[Block, DefaultEdge] = GraphUtil.cfgToJgraphtGraph(cfg)
-  val simCycles: Set[List[Block]] = GraphUtil.getAllSimpleCycles(graph)
+  // val simCycles: Set[List[Block]] = GraphUtil.getAllSimpleCycles(graph)
 }
 
 // References

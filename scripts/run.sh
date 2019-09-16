@@ -29,4 +29,4 @@ mkdir output/
 
 # set -x
 classpath=".:$lib/com.microsoft.z3.jar:$scala_lib:$tool_jar:$jgrapht_core_lib:$jgrapht_io_lib:$jheap_lib"
-javac -Xmaxwarns 10000 -Xmaxerrs 10000 -cp $classpath -processor boundchecker.BoundChecker `find $src_dir -name "*.java"` -d output/
+time javac -Xmaxwarns 10000 -Xmaxerrs 10000 -cp $classpath -processor boundchecker.BoundChecker `find $src_dir -name "*.java"` -d output/

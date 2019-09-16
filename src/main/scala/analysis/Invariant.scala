@@ -1,10 +1,14 @@
 package analysis
 
 import com.microsoft.z3.BoolExpr
-import org.checkerframework.dataflow.cfg.block.{Block, ConditionalBlock, SingleSuccessorBlock}
+import com.sun.source.tree._
+import javax.lang.model.`type`.{TypeKind, TypeMirror}
+import org.checkerframework.dataflow.cfg.block.{Block, ConditionalBlock, RegularBlock, SingleSuccessorBlock}
+import org.checkerframework.javacutil.TreeUtils
 import org.jgrapht.Graph
 import org.jgrapht.graph.{DefaultDirectedGraph, DefaultEdge}
 import utils.GraphUtil
+import org.checkerframework.dataflow.cfg.node.Node
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.HashSet
@@ -13,7 +17,8 @@ import scala.collection.immutable.HashSet
   * @author Tianhan Lu
   */
 object Invariant {
-  val DEBUG_LOCAL_INV = true
+  val DEBUG_LOCAL_INV = false
+  val DEBUG_PRED_TRANS = true
 
   // Return the predicate s.t. if it is valid right after the end of the given block, then it will be valid again next time reaching the end of the given block
   def inferLocalInv(loc: Block,
@@ -25,13 +30,16 @@ object Invariant {
     if (DEBUG_LOCAL_INV) println("\n\n\n" + indentStr + "---Infer inference right after block " + loc.getId + " started:")
     val simCycles = GraphUtil.getAllSimpleCycles(graph)
 
-    val invs = genNewInv(z3Solver)
+    val invs = genNewInv(graph, z3Solver)
     val validInvs = invs.filter({
       inv =>
-        // The inferred invariant must not contradict the context
-        val validity = z3Solver.mkImplies(pred, inv)
+        // The inferred invariant must not contradict the context, i.e. exist state(s) s.t. state|=pred and state|=inv
+        val validity = z3Solver.mkAnd(pred, inv)
+        z3Solver.push()
         z3Solver.mkAssert(validity)
-        z3Solver.checkSAT // TODO: Clear Z3 up?
+        val res = z3Solver.checkSAT
+        z3Solver.pop()
+        res
     }).filter({
       inv =>
         // If for all simple cycles, if the guessed local invariant is valid right after the end of the given block,
@@ -93,7 +101,7 @@ object Invariant {
                     assert(thenBlk != null && elseBlk != null)
                     assert(
                       (!loopBody.contains(thenBlk) && loopBody.contains(elseBlk)) ||
-                      (!loopBody.contains(elseBlk) && loopBody.contains(thenBlk))
+                        (!loopBody.contains(elseBlk) && loopBody.contains(thenBlk))
                     )
                   case _ => assert(false)
                 }
@@ -116,9 +124,11 @@ object Invariant {
                 else {
                   val wlpAfterLoop = acc
                   val initLoopInvWlp = PredTrans.wlpLoop(theSCC, curBlock, loopInvs.head, wlpAfterLoop, z3Solver)
+                  if (DEBUG_PRED_TRANS) println("Loop wlp: " + initLoopInvWlp)
                   acc = loopInvs.tail.foldLeft(initLoopInvWlp)({
                     (acc, loopInv) =>
                       val loopInvWlp = PredTrans.wlpLoop(theSCC, curBlock, loopInv, wlpAfterLoop, z3Solver)
+                      if (DEBUG_PRED_TRANS) println("Loop wlp: " + loopInvWlp)
                       // If any of the inferred inner loop's invariant may work, then we are happy :)
                       z3Solver.mkOr(acc, loopInvWlp)
                   })
@@ -140,6 +150,7 @@ object Invariant {
 
               // Process the current block
               acc = PredTrans.wlpBlock(curBlock, acc, z3Solver)
+              if (DEBUG_PRED_TRANS) println("Block " + curBlock.getId + " wlp: " + acc + "\n")
 
               j = if (j == 0) simCycle.size - 1 else j - 1
             } while (j != idx)
@@ -148,9 +159,25 @@ object Invariant {
             // Otherwise, we do nothing because the given block is not in the current loop --- since this block
             // will not be visited a second time via this simple cycle, the guessed local invariant is vacuously valid
           }
-          val implication = z3Solver.mkImplies(acc, inv)
-          z3Solver.mkAssert(implication)
-          z3Solver.checkSAT // TODO: Clear Z3 up?
+          val implication = z3Solver.mkImplies(inv, acc) // TODO: Which direction?
+          z3Solver.push()
+          val toCheck = z3Solver.mkForall(
+            getAllVars(graph).toArray.map({
+              case (name, typ) =>
+                if (typ.getKind == TypeKind.INT) z3Solver.mkIntVar(name)
+                else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
+                else {
+                  assert(false)
+                  z3Solver.mkFalse()
+                }
+            }),
+            implication
+          )
+          z3Solver.mkAssert(z3Solver.mkNot(toCheck))
+          if (DEBUG_PRED_TRANS) println("Check the validity of inv " + inv.toString + " via " + implication + "\n")
+          val res = z3Solver.checkSAT
+          z3Solver.pop()
+          !res
         })
     })
     if (DEBUG_LOCAL_INV) println(indentStr + "---Invariant inference right after block " + loc.getId + " finishes.")
@@ -162,9 +189,63 @@ object Invariant {
 
   }
 
-  def genNewInv(z3Solver: Z3Solver): Set[BoolExpr] = {
+  def getAllVars(graph: Graph[Block, DefaultEdge]): Set[(String, TypeMirror)] = {
+    def getVars(tree: Tree): Set[(String, TypeMirror)] = {
+      if (tree == null) return new HashSet[(String, TypeMirror)]
+      tree match {
+        case expressionTree: ExpressionTree =>
+          expressionTree match {
+            case identifierTree: IdentifierTree =>
+              val typ = TreeUtils.typeOf(expressionTree)
+              val isInt = typ.getKind == TypeKind.INT
+              val isBool = typ.getKind == TypeKind.BOOLEAN
+              // We only consider boolean or integer variables
+              if (isInt) HashSet[(String, TypeMirror)]((identifierTree.toString, typ))
+              else if (isBool) HashSet[(String, TypeMirror)]((identifierTree.toString, typ))
+              else {
+                // assert(false, expressionTree.toString + ": " + typ)
+                new HashSet[(String, TypeMirror)]
+              }
+
+            case binaryTree: BinaryTree =>
+              binaryTree.getKind match {
+                case Tree.Kind.CONDITIONAL_AND | Tree.Kind.CONDITIONAL_OR | Tree.Kind.DIVIDE | Tree.Kind.EQUAL_TO | Tree.Kind.GREATER_THAN | Tree.Kind.GREATER_THAN_EQUAL | Tree.Kind.LESS_THAN | Tree.Kind.LESS_THAN_EQUAL | Tree.Kind.MINUS | Tree.Kind.MULTIPLY | Tree.Kind.NOT_EQUAL_TO | Tree.Kind.PLUS => getVars(binaryTree.getLeftOperand) ++ getVars(binaryTree.getRightOperand)
+                case _ => assert(false, expressionTree.toString); new HashSet[(String, TypeMirror)]
+              }
+
+            case unaryTree: UnaryTree =>
+              unaryTree.getKind match {
+                case Tree.Kind.UNARY_PLUS | Tree.Kind.UNARY_MINUS | Tree.Kind.LOGICAL_COMPLEMENT => getVars(unaryTree.getExpression)
+                case _ => assert(false, expressionTree.toString); new HashSet[(String, TypeMirror)]
+              }
+
+            case parenthesizedTree: ParenthesizedTree => getVars(parenthesizedTree.getExpression)
+
+            case assignmentTree: AssignmentTree =>
+              getVars(assignmentTree.getExpression) + ((assignmentTree.getVariable.toString, TreeUtils.typeOf(assignmentTree.getVariable)))
+
+            case _ => new HashSet[(String, TypeMirror)]
+          }
+        case variableTree: VariableTree =>
+          val initializer = variableTree.getInitializer
+          getVars(initializer) + ((variableTree.getName.toString, TreeUtils.typeOf(variableTree.getType)))
+        case _ => new HashSet[(String, TypeMirror)]
+      }
+    }
+
+    graph.vertexSet().asScala.flatMap({
+      case reg: RegularBlock => reg.getContents.asScala
+      case _ => List[Node]()
+    }).foldLeft(new HashSet[(String, TypeMirror)])({
+      (acc, node) =>
+        if (node != null) acc ++ getVars(node.getTree)
+        else acc
+    })
+  }
+
+  def genNewInv(graph: Graph[Block, DefaultEdge], z3Solver: Z3Solver): Set[BoolExpr] = {
     var ret = new HashSet[BoolExpr]()
-    ret += z3Solver.mkTrue()
+    ret += z3Solver.mkGt(z3Solver.mkIntVar("R"), z3Solver.mkIntVar("i")) // z3Solver.mkTrue()
     ret
   }
 }

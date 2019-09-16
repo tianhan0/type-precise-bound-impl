@@ -12,7 +12,7 @@ import scala.collection.immutable.HashMap
 class Z3Solver {
   val ctx: Context = new Context
   var vars: HashMap[String, Expr] = new HashMap[String, Expr]
-  val DEBUG: Boolean = true
+  val DEBUG: Boolean = false
 
   val solver: Solver = {
     // cxt.setPrintMode(Z3_PRINT_LOW_LEVEL)

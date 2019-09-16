@@ -13,9 +13,11 @@ abstract public class Zuleger2011bound {
             i=i+1;
             j=0;
             int k=0;
-            while(i<n && nonDet()) {
+            boolean b = nonDet();
+            while(i<n && b) {
                 i=i+1;
                 j=j+1;
+                b = nonDet();
                 R=R+1;
                 // {R≤i}
             }
