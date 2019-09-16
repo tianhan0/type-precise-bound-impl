@@ -125,7 +125,6 @@ object PredTrans {
 
         if (DEBUG_WLP_PROG) {
           println("\nVisiting SCC: " + nodes.map(b => b.getId))
-          GraphUtil.printGraph(scc)
         }
 
         val outgoingEdges = sccCds.outgoingEdgesOf(scc).asScala
@@ -265,8 +264,9 @@ object PredTrans {
               z3Solver: Z3Solver): BoolExpr = {
     assert(loopHead.isInstanceOf[ConditionalBlock], loopHead.toString)
     val loopBlks = loopBody.vertexSet().asScala
-    if (DEBUG_WLP_LOOP)
+    if (DEBUG_WLP_LOOP) {
       println("\n\n\nInfer WLP before loop " + loopBlks.map(b => b.getId) + " with loop head at block " + loopHead.getId + " for post-condition " + pred)
+    }
 
     // Get all assigned variables
     val assignedVars: Set[(String, TypeMirror)] = loopBlks.foldLeft(new HashSet[(String, TypeMirror)])({
@@ -338,6 +338,8 @@ object PredTrans {
   }
 
   // Find the branching condition. The branching block must only have one predecessor
+  // Please make sure that results of function invocation are assigned to variables (instead of being directly used),
+  // because function invocation will always lead to the generation of an exception handling block
   def getBranchCond(block: Block, graph: Graph[Block, DefaultEdge], z3Solver: Z3Solver): BoolExpr = {
     assert(block.isInstanceOf[ConditionalBlock])
     val incomingEdges = graph.incomingEdgesOf(block).asScala
@@ -348,7 +350,18 @@ object PredTrans {
           case expTree: ExpressionTree => transExpr(expTree, z3Solver).asInstanceOf[BoolExpr]
           case x@_ => assert(false, x); z3Solver.mkTrue()
         }
-      case _ => assert(false, block); z3Solver.mkTrue()
+      /*case exp: ExceptionBlock =>
+        val incomingEdges2 = graph.incomingEdgesOf(exp).asScala
+        assert(incomingEdges2.size == 1)
+        graph.getEdgeSource(incomingEdges2.head) match {
+          case reg2: RegularBlock =>
+            reg2.getContents.asScala.last.getTree match {
+              case expTree: ExpressionTree => transExpr(expTree, z3Solver).asInstanceOf[BoolExpr]
+              case x@_ => assert(false, x); z3Solver.mkTrue()
+            }
+          case x@_ => assert(false, x); z3Solver.mkTrue()
+        }*/
+      case x@_ => assert(false, x.getId+"=>"+block.getId); z3Solver.mkTrue()
     }
   }
 
@@ -385,7 +398,7 @@ object PredTrans {
       if (isInt) z3Solver.mkIntVal(0)
       else if (isBool) z3Solver.mkFalse()
       else {
-        assert(false, expressionTree.toString)
+        assert(false, expressionTree.toString + ": " + expressionTree.getKind)
         z3Solver.mkFalse()
       }
     }
@@ -441,6 +454,7 @@ object PredTrans {
         unaryTree.getKind match {
           case Tree.Kind.UNARY_PLUS => transExpr(unaryTree.getExpression, z3Solver)
           case Tree.Kind.UNARY_MINUS => z3Solver.mkSub(z3Solver.mkIntVal(0), transExpr(unaryTree.getExpression, z3Solver))
+          case Tree.Kind.LOGICAL_COMPLEMENT => z3Solver.mkNot(z3Solver.mkBoolVar(unaryTree.getExpression.toString))
           case _ => assert(false, expressionTree.toString); defaultVal
         }
 

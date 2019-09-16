@@ -100,7 +100,7 @@ class Z3Solver {
     asts.foreach(ast => solver.add(ast.asInstanceOf[BoolExpr]))
   }
 
-  def mkNot(o: AST): AST = ctx.mkNot(o.asInstanceOf[BoolExpr])
+  def mkNot(o: AST): BoolExpr = ctx.mkNot(o.asInstanceOf[BoolExpr])
 
   def mkEq(lhs: AST, rhs: AST): BoolExpr = ctx.mkEq(lhs.asInstanceOf[Expr], rhs.asInstanceOf[Expr])
 

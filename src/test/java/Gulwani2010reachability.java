@@ -30,11 +30,13 @@ public abstract class Gulwani2010reachability {
         while (n>0 && m>0) {
             n=n-1;
             m=m-1;
-            while (nonDet()) {
+            boolean b = nonDet();
+            while (b) {
                 n=n-1;
                 m=m+1;
-                R=R+1;
                 // {R+n≤n0-2}
+                b = nonDet();
+                R=R+1;
             }
         }
         // Global invariant: n>0
@@ -78,13 +80,16 @@ public abstract class Gulwani2010reachability {
         int R=0;
         while (i<n) {
             flag=false;
-            while (nonDet()) {
-                if (nonDet()) {
+            boolean b1 = nonDet();
+            while (b1) {
+                boolean b2 = nonDet();
+                if (b2) {
                     flag=true;
                     n=n-1;
                     R=R+1;
                     // {R+n<=n0}
                 }
+                b1 = nonDet();
             }
             if (!flag) {
                 i=i+1;
@@ -136,7 +141,8 @@ public abstract class Gulwani2010reachability {
     void Ex8() {
         int x=0;
         int y=0;
-        while (nonDet()) {
+        boolean b = nonDet();
+        while (b) {
             if (x!=50) {
                 y++;
             } else {
@@ -144,6 +150,7 @@ public abstract class Gulwani2010reachability {
             }
             if (y<0) break;
             x=x+1;
+            b = nonDet();
         }
         // Bound: x=102
     }
@@ -181,7 +188,8 @@ public abstract class Gulwani2010reachability {
         int upd=0;
         int l;
         while (x<N) {
-            if (nonDet()) {
+            boolean b = nonDet();
+            if (b) {
                 l=x;
                 upd=1;
             }
