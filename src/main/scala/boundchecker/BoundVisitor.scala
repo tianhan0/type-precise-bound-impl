@@ -30,7 +30,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
       val cfg = CFGBuilder.build(treePath.getCompilationUnit, node, classTree, checker.getContext.getProcessingEnvironment)
       val myCFG = MyCFG(cfg)
       cfgs += node -> myCFG
-      if (node.getName.toString != "_init") GraphUtil.printCFGtoPDF(cfg, "/Users/lumber/Desktop")
+      if (node.getName.toString != "_init") GraphUtil.printCFGtoPDF(cfg, "/Users/lumber/Desktop/outputs")
     } catch {
       case ex: Exception =>
         Utils.printRedString("[Exception] Generate CFG for method: " + TreeUtils.elementFromTree(node).getSimpleName)
@@ -63,7 +63,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
             val curBlock = blocks.head.asInstanceOf[RegularBlock]
             if (DEBUG_VISIT_ASSIGN) println("Visiting assignment in block: " + curBlock.getId)
 
-            // myCFG.graph.vertexSet().asScala.foreach(b => println(b.getId, b.toString))
+            // GraphUtil.printGraph(myCFG.graph)
             val z3Solver = new Z3Solver
             Invariant.inferLocalInv(curBlock, myCFG.graph, z3Solver.mkTrue(), z3Solver)
           case None => // There is no CFG for the enclosing method

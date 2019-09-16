@@ -1,7 +1,7 @@
 package analysis
 
 import com.microsoft.z3.BoolExpr
-import org.checkerframework.dataflow.cfg.block.{Block, ConditionalBlock, RegularBlock, SingleSuccessorBlock}
+import org.checkerframework.dataflow.cfg.block.{Block, ConditionalBlock, SingleSuccessorBlock}
 import org.jgrapht.Graph
 import org.jgrapht.graph.{DefaultDirectedGraph, DefaultEdge}
 import utils.GraphUtil
@@ -88,7 +88,13 @@ object Invariant {
                 val loopBody = theSCC.vertexSet()
                 curBlock match {
                   case b: ConditionalBlock =>
-                    assert(!loopBody.contains(b.getThenSuccessor) || !loopBody.contains(b.getElseSuccessor))
+                    val thenBlk = b.getThenSuccessor
+                    val elseBlk = b.getElseSuccessor
+                    assert(thenBlk != null && elseBlk != null)
+                    assert(
+                      (!loopBody.contains(thenBlk) && loopBody.contains(elseBlk)) ||
+                      (!loopBody.contains(elseBlk) && loopBody.contains(thenBlk))
+                    )
                   case _ => assert(false)
                 }
 
@@ -133,21 +139,7 @@ object Invariant {
               }
 
               // Process the current block
-              acc = curBlock match {
-                case reg: RegularBlock =>
-                  assert(reg != null && reg.getContents != null)
-                  reg.getContents.asScala.foldLeft(acc)(
-                    (accPred, node) => {
-                      if (node.getTree != null) {
-                        // Infer the weakest precondition of the block
-                        val newPred = PredTrans.wlpBasic(node, accPred, z3Solver)
-                        // println(newPred)
-                        newPred
-                      }
-                      else accPred
-                    })
-                case _ => acc
-              }
+              acc = PredTrans.wlpBlock(curBlock, acc, z3Solver)
 
               j = if (j == 0) simCycle.size - 1 else j - 1
             } while (j != idx)

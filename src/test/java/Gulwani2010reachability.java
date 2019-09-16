@@ -4,18 +4,18 @@
 public abstract class Gulwani2010reachability {
     abstract boolean nonDet();
 
-    void Ex1(int n, boolean[] A) {
+    void Ex1(int n, boolean A) {
         int i=0;
         int R=0;
         int j=0;
         while (i<n) {
             j=i+1;
             while (j<n) {
-                if(A[j]) {
-                    R=R+1;
-                    // {R+n≤n0+1}
+                if(A) {
                     j=j-1;
                     n=n-1;
+                    R=R+1;
+                    // {R+n≤n0+1}
                 }
                 j=j+1;
             }
@@ -41,12 +41,12 @@ public abstract class Gulwani2010reachability {
         // Bound: R≤n0
     }
 
-    void Ex3(int n, boolean[] A) {
+    void Ex3(int n, boolean A) {
         boolean t=false;
         int R=0;
         while (n>0) {
-            t=A[n];
-            while (n>0 && t==A[n]) {
+            t=A;
+            while (n>0 && t==A) {
                 n=n-1;
                 R=R+1;
                 // {R+n≤n0-1}

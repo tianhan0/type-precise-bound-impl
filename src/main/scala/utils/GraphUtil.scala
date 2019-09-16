@@ -10,6 +10,7 @@ import org.jgrapht.alg.connectivity.KosarajuStrongConnectivityInspector
 import org.jgrapht.alg.cycle.{CycleDetector, JohnsonSimpleCycles}
 import org.jgrapht.alg.interfaces.StrongConnectivityAlgorithm
 import org.jgrapht.graph.{DefaultDirectedGraph, DefaultEdge}
+import org.jgrapht.traverse.TopologicalOrderIterator
 
 import scala.collection.JavaConverters._
 
@@ -59,6 +60,16 @@ object GraphUtil {
     stronglyConnectedSubgraphs.asScala.toSet
   }
 
+  def getSCCCondensation[V, E](graph: Graph[V, E]): Graph[Graph[V, E], DefaultEdge] = {
+    val scAlg: StrongConnectivityAlgorithm[V, E] = new KosarajuStrongConnectivityInspector[V, E](graph)
+    scAlg.getCondensation
+  }
+
+  def printGraph(graph: Graph[Block, DefaultEdge]): Unit = {
+    graph.vertexSet().asScala.foreach(b => println(b.getId, b.toString))
+    graph.edgeSet().asScala.foreach(edge => println(graph.getEdgeSource(edge).getId + " => " + graph.getEdgeTarget(edge).getId))
+  }
+
   def printCFGtoPDF(cfg: ControlFlowGraph, outputDir: String): Unit = {
     val args = new util.HashMap[String, AnyRef]
     args.put("outdir", outputDir)
@@ -92,6 +103,15 @@ object GraphUtil {
   }
 
   def hasCycle[V, E](graph: Graph[V, E]): Boolean = new CycleDetector(graph).detectCycles()
+
+  def reverseTopological[V, E](graph: Graph[V, E]): List[V] = {
+    var res = List[V]()
+    val it = new TopologicalOrderIterator(graph)
+    while (it.hasNext) {
+      res = it.next() :: res
+    }
+    res
+  }
 }
 
 case class MyCFG(cfg: ControlFlowGraph) {
