@@ -10,8 +10,9 @@ lib="$PWD/lib"
 
 # ==========================Please configure the following paths============================
 scala_lib="$HOME/.sbt/preloaded/org.scala-lang/scala-library/2.12.7/jars/scala-library.jar"
-jgrapht_lib="$HOME/.ivy2/cache/org.jgrapht/jgrapht-core/jars/jgrapht-core-1.3.1.jar"
+jgrapht_core_lib="$HOME/.ivy2/cache/org.jgrapht/jgrapht-core/jars/jgrapht-core-1.3.1.jar"
 jheap_lib="$HOME/.ivy2/cache/org.jheaps/jheaps/jars/jheaps-0.10.jar"
+jgrapht_io_lib="$HOME/.ivy2/cache/org.jgrapht/jgrapht-io/jars/jgrapht-io-1.3.1.jar"
 # ==========================================================================================
 
 tool_jar="$HOME/Desktop/bc.jar"
@@ -27,5 +28,5 @@ rm -rf output/
 mkdir output/
 
 # set -x
-classpath=".:$lib/com.microsoft.z3.jar:$scala_lib:$tool_jar:$jgrapht_lib:$jheap_lib"
+classpath=".:$lib/com.microsoft.z3.jar:$scala_lib:$tool_jar:$jgrapht_core_lib:$jgrapht_io_lib:$jheap_lib"
 javac -Xmaxwarns 10000 -Xmaxerrs 10000 -cp $classpath -processor boundchecker.BoundChecker `find $src_dir -name "*.java"` -d output/

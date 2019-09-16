@@ -1,5 +1,7 @@
 package boundchecker
 
+import java.io.File
+
 import analysis.{Invariant, Z3Solver}
 import com.sun.source.tree.{AssignmentTree, MethodTree}
 import org.checkerframework.common.basetype.{BaseAnnotatedTypeFactory, BaseTypeChecker, BaseTypeVisitor}
@@ -21,6 +23,9 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   var resVarRegex: Regex = """R(\d*)""".r
   var cfgs = new HashMap[MethodTree, MyCFG]()
   val DEBUG_VISIT_ASSIGN = false
+  val SEPARATOR = File.separator
+  val DESKTOP_PATH = System.getProperty("user.home") + SEPARATOR + "Desktop"
+  val OUTPUT_DIR = DESKTOP_PATH + SEPARATOR + "outputs"
 
   override def visitMethod(node: MethodTree, p: Void): Void = {
     val treePath = atypeFactory.getPath(node)
@@ -30,7 +35,10 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
       val cfg = CFGBuilder.build(treePath.getCompilationUnit, node, classTree, checker.getContext.getProcessingEnvironment)
       val myCFG = MyCFG(cfg)
       cfgs += node -> myCFG
-      if (node.getName.toString != "_init") GraphUtil.printCFGtoPDF(cfg, "/Users/lumber/Desktop/outputs")
+      if (node.getName.toString != "<init>") {
+        GraphUtil.printCFGtoPDF(cfg, OUTPUT_DIR)
+        GraphUtil.printGraphtoPDF(myCFG.graph, OUTPUT_DIR + SEPARATOR + classTree.getSimpleName + "_" + node.getName.toString)
+      }
     } catch {
       case ex: Exception =>
         Utils.printRedString("[Exception] Generate CFG for method: " + TreeUtils.elementFromTree(node).getSimpleName)
@@ -53,7 +61,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
                 case (n, idx) =>
                   if (n.getTree == node) {
                     if (idx != reg.getContents.size() - 1)
-                      Utils.assertFalse("Resource instruction ["+node.toString+"] must be at the end of a block!")
+                      Utils.assertFalse("Resource instruction [" + node.toString + "] must be at the end of a block!")
                     true
                   } else false
               })

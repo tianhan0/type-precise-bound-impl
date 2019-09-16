@@ -1,6 +1,6 @@
 package utils
 
-import java.io.IOException
+import java.io.{File, IOException}
 import java.util
 
 import org.checkerframework.dataflow.cfg.block._
@@ -10,6 +10,7 @@ import org.jgrapht.alg.connectivity.KosarajuStrongConnectivityInspector
 import org.jgrapht.alg.cycle.{CycleDetector, JohnsonSimpleCycles}
 import org.jgrapht.alg.interfaces.StrongConnectivityAlgorithm
 import org.jgrapht.graph.{DefaultDirectedGraph, DefaultEdge}
+import org.jgrapht.io.{ComponentNameProvider, DOTExporter}
 import org.jgrapht.traverse.TopologicalOrderIterator
 
 import scala.collection.JavaConverters._
@@ -65,9 +66,26 @@ object GraphUtil {
     scAlg.getCondensation
   }
 
-  def printGraph(graph: Graph[Block, DefaultEdge]): Unit = {
-    graph.vertexSet().asScala.foreach(b => println(b.getId, b.toString))
-    graph.edgeSet().asScala.foreach(edge => println(graph.getEdgeSource(edge).getId + " => " + graph.getEdgeTarget(edge).getId))
+  def printGraphtoPDF(graph: Graph[Block, DefaultEdge], fileName: String): Unit = {
+    val vertexIdProvider = new ComponentNameProvider[Block]() {
+      override def getName(block: Block): String = block.getId.toString
+    }
+    val vertexLabelProvider = new ComponentNameProvider[Block]() {
+      override def getName(block: Block): String = block.getId.toString + "\n" + block.toString
+    }
+    val dotExp = new DOTExporter[Block, DefaultEdge](vertexIdProvider, vertexLabelProvider, null)
+    val dotFile = fileName+".dot"
+    val pdfFile = fileName+".pdf"
+    try {
+      dotExp.exportGraph(graph, new File(dotFile))
+      val command = "dot -Tpdf " + dotFile + " -o " + pdfFile
+      val child = Runtime.getRuntime.exec(command)
+      child.waitFor
+    } catch {
+      case e@(_: InterruptedException | _: IOException) =>
+        e.printStackTrace()
+        System.exit(1)
+    }
   }
 
   def printCFGtoPDF(cfg: ControlFlowGraph, outputDir: String): Unit = {
