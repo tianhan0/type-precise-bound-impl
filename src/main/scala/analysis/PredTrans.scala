@@ -91,12 +91,12 @@ object PredTrans {
     curBlock match {
       case reg: RegularBlock =>
         assert(reg != null && reg.getContents != null)
-        reg.getContents.asScala.foldLeft(pred)(
+        getTopLevelStmts(reg).foldLeft(pred)(
           (accPred, node) => {
             if (node.getTree != null) {
               // Compute the weakest precondition of the instruction
               val newPred = PredTrans.wlpBasic(node, accPred, z3Solver)
-              if (DEBUG_WLP_BLOCK) println(node, newPred)
+              if (DEBUG_WLP_BLOCK) println("WLP of statement " + node.getTree + " for predicate " + newPred)
               newPred
             }
             else accPred
@@ -388,10 +388,9 @@ object PredTrans {
   def getTopLevelStmts(block: Block): List[Node] = {
     block match {
       case reg: RegularBlock => reg.getContents.asScala.filter({
-        case regp: RegularBlock => isTopLevelStmt(regp)
-        case _ => false // We don't consider non-regular blocks as being possible to contain top level statements
+        node => isTopLevelStmt(node)
       }).toList
-      case _ => List[Node]()
+      case _ => List[Node]() // We don't consider non-regular blocks as being possible to contain top level statements
     }
   }
 

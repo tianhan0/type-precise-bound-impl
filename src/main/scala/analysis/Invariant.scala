@@ -95,8 +95,6 @@ object Invariant {
               val theSCC = sccs.head
               // If the SCC contains a loop
               if (GraphUtil.hasCycle(theSCC)) {
-                // if (DEBUG_LOCAL_INV)  GraphUtil.getAllSimpleCycles(theSCC).foreach(loop => println(indentStr + "" + loop.map(b => b.getId).toString()))
-
                 // The current block must be the loop head, i.e. one of its successor must be outside the loop
                 val loopBody = theSCC.vertexSet()
                 curBlock match {
@@ -310,10 +308,10 @@ object Invariant {
     /*HashSet[BoolExpr](
       z3Solver.mkLe(
         z3Solver.mkAdd(
-          z3Solver.mkIntVar("R"),
-          z3Solver.mkIntVar("i")
+          z3Solver.mkMul(z3Solver.mkIntVal(1), z3Solver.mkIntVar("R")),
+          z3Solver.mkMul(z3Solver.mkIntVal(-1), z3Solver.mkIntVar("j"))
         ),
-        z3Solver.mkIntVal(0))
+        z3Solver.mkIntVal(-1))
     )*/
   }
 }
