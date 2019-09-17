@@ -21,6 +21,7 @@ object PredTrans {
   val DEBUG_TRANS_EXPR = false
   val DEBUG_WLP_LOOP = false
   val DEBUG_WLP_PROG = false
+  val DEBUG_WLP_BLOCK = false
 
   // Compute the weakest precondition of a given predicate over a given AST node (representing basic statements, instead of compound statements)
   def wlpBasic(node: Node, pred: BoolExpr, z3Solver: Z3Solver): BoolExpr = {
@@ -95,7 +96,7 @@ object PredTrans {
             if (node.getTree != null) {
               // Compute the weakest precondition of the instruction
               val newPred = PredTrans.wlpBasic(node, accPred, z3Solver)
-              // println(newPred)
+              if (DEBUG_WLP_BLOCK) println(node, newPred)
               newPred
             }
             else accPred

@@ -70,7 +70,8 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
             // GraphUtil.printGraph(myCFG.graph)
             val z3Solver = new Z3Solver
             val invs = Invariant.inferLocalInv(curBlock, myCFG.graph, z3Solver.mkTrue(), z3Solver)
-            invs.foreach(b => issueWarning(node, "Local invariant inferred: " + b.toString))
+            issueWarning(node, "We inferred " + invs.size + " local invariants!")
+            invs.foreach(b => { Utils.printCyanString(b.toString) })
           case None => // There is no CFG for the enclosing method
         }
       case None => // This is not an assignment updating resource variables

@@ -4,21 +4,22 @@ import com.microsoft.z3.BoolExpr
 import com.sun.source.tree._
 import javax.lang.model.`type`.{TypeKind, TypeMirror}
 import org.checkerframework.dataflow.cfg.block.{Block, ConditionalBlock, RegularBlock, SingleSuccessorBlock}
+import org.checkerframework.dataflow.cfg.node.Node
 import org.checkerframework.javacutil.TreeUtils
 import org.jgrapht.Graph
 import org.jgrapht.graph.{DefaultDirectedGraph, DefaultEdge}
 import utils.GraphUtil
-import org.checkerframework.dataflow.cfg.node.Node
 
 import scala.collection.JavaConverters._
-import scala.collection.immutable.HashSet
+import scala.collection.immutable.{HashMap, HashSet}
 
 /**
   * @author Tianhan Lu
   */
 object Invariant {
   val DEBUG_LOCAL_INV = false
-  val DEBUG_PRED_TRANS = true
+  val DEBUG_PRED_TRANS = false
+  val DEBUG_GEN_NEW_INV = false
 
   // Return the predicate s.t. if it is valid right after the end of the given block, then it will be valid again next time reaching the end of the given block
   def inferLocalInv(loc: Block,
@@ -30,7 +31,10 @@ object Invariant {
     if (DEBUG_LOCAL_INV) println("\n\n\n" + indentStr + "---Infer inference right after block " + loc.getId + " started:")
     val simCycles = GraphUtil.getAllSimpleCycles(graph)
 
-    val invs = genNewInv(graph, z3Solver)
+    val allVars = getAllVars(graph)
+
+    val invs = genNewInv(allVars, z3Solver)
+    if (DEBUG_GEN_NEW_INV) println("# of vars: " + allVars.size + "\n# of invs: " + invs.size)
     val validInvs = invs.filter({
       inv =>
         // The inferred invariant must not contradict the context, i.e. exist state(s) s.t. state|=pred and state|=inv
@@ -42,12 +46,13 @@ object Invariant {
         res
     }).filter({
       inv =>
+        if (DEBUG_PRED_TRANS) println(indentStr + "Verify the validity of invariant " + inv)
         // If for all simple cycles, if the guessed local invariant is valid right after the end of the given block,
         // then it will be valid again next time reaching the end of the given block,
         // then the guessed local invariant is valid
         simCycles.forall(simCycle => {
           if (DEBUG_LOCAL_INV) println("\n" + indentStr + "Simple cycle: " + simCycle.map(b => b.getId))
-          var acc = pred
+          var acc = inv
           val idx = simCycle.indexOf(loc)
           if (idx != -1) {
             // Remove the edge in the current simple cycle that starts from the given block, preventing visiting
@@ -81,7 +86,7 @@ object Invariant {
             var j = idx
             do {
               val curBlock = simCycle(j)
-              if (DEBUG_LOCAL_INV) println(indentStr + "  curBlock: " + curBlock.getId)
+              if (DEBUG_LOCAL_INV) println(indentStr + "  curBlock " + curBlock.getId)
 
               // Find out the SCC containing the current block
               val sccs = GraphUtil.getSCCs(newGraph).filter(graph => graph.vertexSet().asScala.contains(curBlock))
@@ -108,13 +113,18 @@ object Invariant {
 
                 // Find local invariants for the (semantic) inner loop in the new graph under the context of ??? s.t.
                 // if the invariant is valid right after the loop head, then it will be valid again upon next visit
-                val loopInvs = inferLocalInv(
-                  curBlock,
-                  theSCC,
-                  z3Solver.mkTrue(),
-                  z3Solver,
-                  indent + 2
-                )
+                val loopInvs = {
+                  // Recursive invocation of this procedure will lead to verifying exponential # of invariants
+                  // This is unsound because `true` is not verified to be a valid loop invariant
+                  List(z3Solver.mkTrue())
+                  /*inferLocalInv(
+                    curBlock,
+                    theSCC,
+                    z3Solver.mkTrue(),
+                    z3Solver,
+                    indent + 2
+                  )*/
+                }
 
                 // Infer the weakest precondition before entering the inner loop
                 if (loopInvs.isEmpty) {
@@ -124,11 +134,11 @@ object Invariant {
                 else {
                   val wlpAfterLoop = acc
                   val initLoopInvWlp = PredTrans.wlpLoop(theSCC, curBlock, loopInvs.head, wlpAfterLoop, z3Solver)
-                  if (DEBUG_PRED_TRANS) println("Loop wlp: " + initLoopInvWlp)
+                  if (DEBUG_PRED_TRANS) println(indentStr + "  Loop wlp: " + initLoopInvWlp)
                   acc = loopInvs.tail.foldLeft(initLoopInvWlp)({
                     (acc, loopInv) =>
                       val loopInvWlp = PredTrans.wlpLoop(theSCC, curBlock, loopInv, wlpAfterLoop, z3Solver)
-                      if (DEBUG_PRED_TRANS) println("Loop wlp: " + loopInvWlp)
+                      if (DEBUG_PRED_TRANS) println(indentStr + "  Loop wlp: " + loopInvWlp)
                       // If any of the inferred inner loop's invariant may work, then we are happy :)
                       z3Solver.mkOr(acc, loopInvWlp)
                   })
@@ -150,7 +160,7 @@ object Invariant {
 
               // Process the current block
               acc = PredTrans.wlpBlock(curBlock, acc, z3Solver)
-              if (DEBUG_PRED_TRANS) println("Block " + curBlock.getId + " wlp: " + acc + "\n")
+              if (DEBUG_PRED_TRANS) println(indentStr + "  curBlock " + curBlock.getId + " wlp: " + acc + "\n")
 
               j = if (j == 0) simCycle.size - 1 else j - 1
             } while (j != idx)
@@ -160,23 +170,28 @@ object Invariant {
             // will not be visited a second time via this simple cycle, the guessed local invariant is vacuously valid
           }
           val implication = z3Solver.mkImplies(inv, acc) // TODO: Which direction?
+          val toCheck = {
+            z3Solver.mkNot(
+              z3Solver.mkForall(
+                allVars.toArray.map({
+                  case (name, typ) =>
+                    if (typ.getKind == TypeKind.INT) z3Solver.mkIntVar(name)
+                    else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
+                    else {
+                      assert(false)
+                      z3Solver.mkFalse()
+                    }
+                }),
+                implication
+              )
+            )
+          }
           z3Solver.push()
-          val toCheck = z3Solver.mkForall(
-            getAllVars(graph).toArray.map({
-              case (name, typ) =>
-                if (typ.getKind == TypeKind.INT) z3Solver.mkIntVar(name)
-                else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
-                else {
-                  assert(false)
-                  z3Solver.mkFalse()
-                }
-            }),
-            implication
-          )
-          z3Solver.mkAssert(z3Solver.mkNot(toCheck))
-          if (DEBUG_PRED_TRANS) println("Check the validity of inv " + inv.toString + " via " + implication + "\n")
+          z3Solver.mkAssert(toCheck)
           val res = z3Solver.checkSAT
           z3Solver.pop()
+          if (DEBUG_PRED_TRANS)
+            println(indentStr + "  Check the validity of inv " + inv.toString + " via\n" + toCheck + "\nZ3 result: " + res + "\n")
           !res
         })
     })
@@ -243,9 +258,62 @@ object Invariant {
     })
   }
 
-  def genNewInv(graph: Graph[Block, DefaultEdge], z3Solver: Z3Solver): Set[BoolExpr] = {
-    var ret = new HashSet[BoolExpr]()
-    ret += z3Solver.mkGt(z3Solver.mkIntVar("R"), z3Solver.mkIntVar("i")) // z3Solver.mkTrue()
-    ret
+  def genNewInv(allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Set[BoolExpr] = {
+    val coeff = HashSet[Int](-1, 1)
+    val constants = {
+      val pos = HashSet[Int](0, 1)
+      pos.map(n => -n) ++ pos
+    }
+
+    def getTyp(typ: TypeMirror): TypeKind = {
+      if (typ.getKind == TypeKind.INT) TypeKind.INT
+      else if (typ.getKind == TypeKind.BOOLEAN) TypeKind.BOOLEAN
+      else {
+        assert(false)
+        TypeKind.INT
+      }
+    }
+
+    allVars.zipWithIndex.foldLeft(new HashMap[String, BoolExpr])({
+      case (acc, ((name1, typ1), idx1)) =>
+        allVars.zipWithIndex.foldLeft(acc)({
+          case (accp, ((name2, typ2), idx2)) =>
+            if (idx2 > idx1) {
+              (getTyp(typ1), getTyp(typ2)) match {
+                case (TypeKind.INT, TypeKind.INT) =>
+                  val var1 = z3Solver.mkIntVar(name1)
+                  val var2 = z3Solver.mkIntVar(name2)
+
+                  coeff.foldLeft(accp)({
+                    (acc1, c1) =>
+                      coeff.foldLeft(acc1)({
+                        (acc2, c2) =>
+                          constants.foldLeft(acc2)({
+                            (acc3, c3) =>
+                              val expr = z3Solver.mkLe(
+                                z3Solver.mkAdd(
+                                  z3Solver.mkMul(z3Solver.mkIntVal(c1), var1),
+                                  z3Solver.mkMul(z3Solver.mkIntVal(c2), var2)
+                                ),
+                                z3Solver.mkIntVal(c3)
+                              )
+                              acc3 + (expr.toString -> expr)
+                          })
+                      })
+                  })
+                case _ => accp
+              }
+            }
+            else accp
+        })
+    }).values.toSet
+    /*HashSet[BoolExpr](
+      z3Solver.mkLe(
+        z3Solver.mkAdd(
+          z3Solver.mkIntVar("R"),
+          z3Solver.mkIntVar("i")
+        ),
+        z3Solver.mkIntVal(0))
+    )*/
   }
 }
