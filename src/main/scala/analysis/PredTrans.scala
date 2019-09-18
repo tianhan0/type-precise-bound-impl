@@ -19,9 +19,10 @@ import scala.collection.immutable.{HashMap, HashSet}
 // Weakest precondition computation over a graph, instead of an AST
 object PredTrans {
   val DEBUG_TRANS_EXPR = false
+  val DEBUG = true
   val DEBUG_WLP_LOOP = false
   val DEBUG_WLP_PROG = false
-  val DEBUG_WLP_BLOCK = false
+  val DEBUG_WLP_BLOCK = DEBUG
 
   // Compute the weakest precondition of a given predicate over a given AST node (representing basic statements, instead of compound statements)
   def wlpBasic(node: Node, pred: BoolExpr, z3Solver: Z3Solver): BoolExpr = {
@@ -96,7 +97,9 @@ object PredTrans {
             if (node.getTree != null) {
               // Compute the weakest precondition of the instruction
               val newPred = PredTrans.wlpBasic(node, accPred, z3Solver)
-              if (DEBUG_WLP_BLOCK) println("WLP of statement " + node.getTree + " for predicate " + newPred)
+              if (DEBUG_WLP_BLOCK) {
+                println("WLP of statement " + node.getTree + " after predicate " + accPred + " is predicate " + newPred)
+              }
               newPred
             }
             else accPred
@@ -158,6 +161,8 @@ object PredTrans {
 
             if (DEBUG_WLP_PROG) println("Next block is: " + nxtBlk)
 
+            // If the next block is a conditional block, then the current block's post-condition
+            // should be the pre-condition of that conditional block
             nxtBlk match {
               case nxtBlk: ConditionalBlock =>
                 val cond = getBranchCond(nxtBlk, graph, z3Solver)
@@ -318,7 +323,7 @@ object PredTrans {
     val body: Expr = {
       val body = z3Solver.mkAnd(
         z3Solver.mkImplies(z3Solver.mkAnd(loopCond, loopInv), loopBodyWlp),
-        z3Solver.mkImplies(z3Solver.mkAnd(z3Solver.mkNot(loopCond)), pred)
+        z3Solver.mkImplies(z3Solver.mkAnd(z3Solver.mkNot(loopCond), loopInv), pred)
       )
       if (assignedVars.nonEmpty) {
         z3Solver.mkForall(
@@ -379,7 +384,7 @@ object PredTrans {
       case (n, i) =>
         if (i > idx) {
           val transOps = n.getTransitiveOperands
-          transOps.asScala.exists(op => op == n)
+          transOps.asScala.exists(op => op == node)
         }
         else false
     })

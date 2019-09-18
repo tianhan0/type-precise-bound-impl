@@ -11,14 +11,15 @@ import org.jgrapht.graph.{DefaultDirectedGraph, DefaultEdge}
 import utils.GraphUtil
 
 import scala.collection.JavaConverters._
-import scala.collection.immutable.{HashMap, HashSet}
+import scala.collection.immutable.HashSet
 
 /**
   * @author Tianhan Lu
   */
 object Invariant {
-  val DEBUG_LOCAL_INV = false
-  val DEBUG_PRED_TRANS = false
+  val DEBUG = true
+  val DEBUG_LOCAL_INV = DEBUG
+  val DEBUG_PRED_TRANS = DEBUG
   val DEBUG_GEN_NEW_INV = false
 
   // Return the predicate s.t. if it is valid right after the end of the given block, then it will be valid again next time reaching the end of the given block
@@ -86,7 +87,7 @@ object Invariant {
             var j = idx
             do {
               val curBlock = simCycle(j)
-              if (DEBUG_LOCAL_INV) println(indentStr + "  curBlock " + curBlock.getId)
+              if (DEBUG_LOCAL_INV) println(indentStr + "->curBlock " + curBlock.getId)
 
               // Find out the SCC containing the current block
               val sccs = GraphUtil.getSCCs(newGraph).filter(graph => graph.vertexSet().asScala.contains(curBlock))
@@ -158,7 +159,7 @@ object Invariant {
 
               // Process the current block
               acc = PredTrans.wlpBlock(curBlock, acc, z3Solver)
-              if (DEBUG_PRED_TRANS) println(indentStr + "  curBlock " + curBlock.getId + " wlp: " + acc + "\n")
+              if (DEBUG_PRED_TRANS) println(indentStr + "<-curBlock " + curBlock.getId + " wlp: " + acc + "\n")
 
               j = if (j == 0) simCycle.size - 1 else j - 1
             } while (j != idx)
@@ -272,7 +273,7 @@ object Invariant {
       }
     }
 
-    allVars.zipWithIndex.foldLeft(new HashMap[String, BoolExpr])({
+    /*allVars.zipWithIndex.foldLeft(new HashMap[String, BoolExpr])({
       case (acc, ((name1, typ1), idx1)) =>
         allVars.zipWithIndex.foldLeft(acc)({
           case (accp, ((name2, typ2), idx2)) =>
@@ -304,14 +305,14 @@ object Invariant {
             }
             else accp
         })
-    }).values.toSet
-    /*HashSet[BoolExpr](
+    }).values.toSet + z3Solver.mkTrue()*/
+    HashSet[BoolExpr](
       z3Solver.mkLe(
         z3Solver.mkAdd(
           z3Solver.mkMul(z3Solver.mkIntVal(1), z3Solver.mkIntVar("R")),
-          z3Solver.mkMul(z3Solver.mkIntVal(-1), z3Solver.mkIntVar("j"))
+          z3Solver.mkMul(z3Solver.mkIntVal(-1), z3Solver.mkIntVar("i"))
         ),
-        z3Solver.mkIntVal(-1))
-    )*/
+        z3Solver.mkIntVal(0))
+    )
   }
 }
