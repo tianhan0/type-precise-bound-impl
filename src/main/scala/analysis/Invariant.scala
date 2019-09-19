@@ -11,13 +11,13 @@ import org.jgrapht.graph.{DefaultDirectedGraph, DefaultEdge}
 import utils.GraphUtil
 
 import scala.collection.JavaConverters._
-import scala.collection.immutable.HashSet
+import scala.collection.immutable.{HashMap, HashSet}
 
 /**
   * @author Tianhan Lu
   */
 object Invariant {
-  val DEBUG = true
+  val DEBUG = false
   val DEBUG_LOCAL_INV = DEBUG
   val DEBUG_PRED_TRANS = DEBUG
   val DEBUG_GEN_NEW_INV = false
@@ -131,16 +131,17 @@ object Invariant {
                   return new HashSet[BoolExpr]()
                 }
                 else {
-                  val wlpAfterLoop = acc
-                  val initLoopInvWlp = PredTrans.wlpLoop(theSCC, curBlock, loopInvs.head, wlpAfterLoop, z3Solver)
-                  if (DEBUG_PRED_TRANS) println(indentStr + "  Loop wlp: " + initLoopInvWlp)
-                  acc = loopInvs.tail.foldLeft(initLoopInvWlp)({
-                    (acc, loopInv) =>
-                      val loopInvWlp = PredTrans.wlpLoop(theSCC, curBlock, loopInv, wlpAfterLoop, z3Solver)
-                      if (DEBUG_PRED_TRANS) println(indentStr + "  Loop wlp: " + loopInvWlp)
-                      // If any of the inferred inner loop's invariant may work, then we are happy :)
-                      z3Solver.mkOr(acc, loopInvWlp)
-                  })
+                  // If any of the inferred inner loop's invariant may work, then we are happy :)
+                  val loopPreds = loopInvs.map(loopInv => PredTrans.wlpLoop(theSCC, curBlock, loopInv, acc, z3Solver))
+                  acc = z3Solver.mkOr(loopPreds: _*)
+                  if (DEBUG_PRED_TRANS) {
+                    loopPreds.foreach(loopPred => println(indentStr + "  Loop wlp: " + loopPred))
+                    /*z3Solver.push()
+                    z3Solver.mkAssert(acc)
+                    val res = z3Solver.checkSAT
+                    z3Solver.pop()
+                    assert(res, acc)*/
+                  }
                 }
 
                 // Make the inner loop acyclic by removing the edge starting from the current block
@@ -159,7 +160,14 @@ object Invariant {
 
               // Process the current block
               acc = PredTrans.wlpBlock(curBlock, acc, z3Solver)
-              if (DEBUG_PRED_TRANS) println(indentStr + "<-curBlock " + curBlock.getId + " wlp: " + acc + "\n")
+              if (DEBUG_PRED_TRANS) {
+                println(indentStr + "<-curBlock " + curBlock.getId + " wlp: " + acc + "\n")
+                /*z3Solver.push()
+                z3Solver.mkAssert(acc)
+                val res = z3Solver.checkSAT
+                z3Solver.pop()
+                assert(res, acc)*/
+              }
 
               j = if (j == 0) simCycle.size - 1 else j - 1
             } while (j != idx)
@@ -170,7 +178,7 @@ object Invariant {
           }
           val implication = z3Solver.mkImplies(inv, acc) // TODO: Which direction?
           val toCheck = {
-            z3Solver.mkNot(
+            /*z3Solver.mkNot(
               z3Solver.mkForall(
                 allVars.toArray.map({
                   case (name, typ) =>
@@ -183,7 +191,8 @@ object Invariant {
                 }),
                 implication
               )
-            )
+            )*/
+            implication
           }
           z3Solver.push()
           z3Solver.mkAssert(toCheck)
@@ -191,7 +200,7 @@ object Invariant {
           z3Solver.pop()
           if (DEBUG_PRED_TRANS)
             println(indentStr + "  Check the validity of inv " + inv.toString + " via\n" + toCheck + "\nZ3 result: " + res + "\n")
-          !res
+          res
         })
     })
     if (DEBUG_LOCAL_INV) println(indentStr + "---Invariant inference right after block " + loc.getId + " finishes.")
@@ -273,7 +282,7 @@ object Invariant {
       }
     }
 
-    /*allVars.zipWithIndex.foldLeft(new HashMap[String, BoolExpr])({
+    allVars.zipWithIndex.foldLeft(new HashMap[String, BoolExpr])({
       case (acc, ((name1, typ1), idx1)) =>
         allVars.zipWithIndex.foldLeft(acc)({
           case (accp, ((name2, typ2), idx2)) =>
@@ -305,14 +314,14 @@ object Invariant {
             }
             else accp
         })
-    }).values.toSet + z3Solver.mkTrue()*/
-    HashSet[BoolExpr](
+    }).values.toSet + z3Solver.mkTrue()
+    /*HashSet[BoolExpr](
       z3Solver.mkLe(
         z3Solver.mkAdd(
           z3Solver.mkMul(z3Solver.mkIntVal(1), z3Solver.mkIntVar("R")),
           z3Solver.mkMul(z3Solver.mkIntVal(-1), z3Solver.mkIntVar("i"))
         ),
         z3Solver.mkIntVal(0))
-    )
+    )*/
   }
 }

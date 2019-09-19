@@ -8,7 +8,7 @@ import org.checkerframework.dataflow.cfg.node.Node
 import org.checkerframework.javacutil.TreeUtils
 import org.jgrapht.Graph
 import org.jgrapht.graph.{DefaultDirectedGraph, DefaultEdge}
-import utils.GraphUtil
+import utils.{GraphUtil, Utils}
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.{HashMap, HashSet}
@@ -19,10 +19,10 @@ import scala.collection.immutable.{HashMap, HashSet}
 // Weakest precondition computation over a graph, instead of an AST
 object PredTrans {
   val DEBUG_TRANS_EXPR = false
-  val DEBUG = true
-  val DEBUG_WLP_LOOP = false
-  val DEBUG_WLP_PROG = false
-  val DEBUG_WLP_BLOCK = DEBUG
+  val DEBUG = false
+  val DEBUG_WLP_LOOP = DEBUG
+  val DEBUG_WLP_PROG = DEBUG
+  val DEBUG_WLP_BLOCK = false
 
   // Compute the weakest precondition of a given predicate over a given AST node (representing basic statements, instead of compound statements)
   def wlpBasic(node: Node, pred: BoolExpr, z3Solver: Z3Solver): BoolExpr = {
@@ -92,13 +92,19 @@ object PredTrans {
     curBlock match {
       case reg: RegularBlock =>
         assert(reg != null && reg.getContents != null)
-        getTopLevelStmts(reg).foldLeft(pred)(
+        // Traverse statements backwards
+        getTopLevelStmts(reg).reverse.foldLeft(pred)(
           (accPred, node) => {
             if (node.getTree != null) {
               // Compute the weakest precondition of the instruction
               val newPred = PredTrans.wlpBasic(node, accPred, z3Solver)
               if (DEBUG_WLP_BLOCK) {
-                println("WLP of statement " + node.getTree + " after predicate " + accPred + " is predicate " + newPred)
+                println("WLP of statement " + node.getTree + " before predicate " + accPred + " is predicate " + newPred)
+                /*z3Solver.push()
+                z3Solver.mkAssert(newPred)
+                val res = z3Solver.checkSAT
+                z3Solver.pop()
+                assert(res, newPred)*/
               }
               newPred
             }
@@ -112,10 +118,10 @@ object PredTrans {
   def wlpProg(root: Block,
               graph: Graph[Block, DefaultEdge],
               pred: BoolExpr,
-              z3Solver: Z3Solver,
-              indent: Int = 0): BoolExpr = {
-    if (DEBUG_WLP_PROG)
-      println("\n\n\nInfer WLP before block " + root.getId + " in program " + graph.vertexSet().asScala.map(b => b.getId) + " for post-condition " + pred)
+              z3Solver: Z3Solver): BoolExpr = {
+    if (DEBUG_WLP_PROG) {
+      println("\n\n\nInfer WLP before block " + root.getId + " in program " + graph.vertexSet().asScala.map(b => b.getId) + " with post-condition " + pred)
+    }
 
     val progNodes = graph.vertexSet().asScala
 
@@ -159,7 +165,7 @@ object PredTrans {
               nxtBlks.head
             }
 
-            if (DEBUG_WLP_PROG) println("Next block is: " + nxtBlk)
+            if (DEBUG_WLP_PROG) println("Next block is " + nxtBlk.getId + ": " + nxtBlk)
 
             // If the next block is a conditional block, then the current block's post-condition
             // should be the pre-condition of that conditional block
@@ -198,8 +204,16 @@ object PredTrans {
                       z3Solver.mkImplies(cond, thenPred._1),
                       z3Solver.mkImplies(z3Solver.mkNot(cond), elsePred._1)
                     )
-                  case (Some(thenPred), None) => z3Solver.mkImplies(cond, thenPred._1)
-                  case (None, Some(elsePred)) => z3Solver.mkImplies(z3Solver.mkNot(cond), elsePred._1)
+                  case (Some(thenPred), None) =>
+                    z3Solver.mkAnd(
+                      z3Solver.mkImplies(cond, thenPred._1),
+                      z3Solver.mkImplies(z3Solver.mkNot(cond), z3Solver.mkTrue()) // TODO: Is this correct?
+                    )
+                  case (None, Some(elsePred)) =>
+                    z3Solver.mkAnd(
+                      z3Solver.mkImplies(cond, z3Solver.mkTrue()), // TODO: Is this correct?
+                      z3Solver.mkImplies(z3Solver.mkNot(cond), elsePred._1)
+                    )
                   case _ => assert(false); z3Solver.mkFalse()
                 }
               case nxtBlk: SingleSuccessorBlock =>
@@ -211,7 +225,10 @@ object PredTrans {
             }
           }
           else if (outgoingEdges.size == 2) {
-            z3Solver.mkFalse() // We shall never read this value
+            // We shall never read this value, but we let the pre-condition of a conditional block to be true
+            // to encode the fact that the beginning of the conditional block is always reachable
+            // Is this sound?
+            z3Solver.mkTrue()
           }
           else if (outgoingEdges.size > 2) {
             assert(false)
@@ -246,6 +263,20 @@ object PredTrans {
             wlpBlock(nodes.head, postPred, z3Solver)
           }
         }
+        if (DEBUG_WLP_PROG) {
+          println("Pre: " + prePred + "\nPost: " + postPred + "\n")
+          /*z3Solver.push()
+          z3Solver.mkAssert(prePred)
+          val res1 = z3Solver.checkSAT
+          z3Solver.pop()
+          assert(res1, prePred)
+
+          z3Solver.push()
+          z3Solver.mkAssert(postPred)
+          val res2 = z3Solver.checkSAT
+          z3Solver.pop()
+          assert(res2, postPred)*/
+        }
         acc + (scc -> (prePred, postPred))
     })
 
@@ -253,9 +284,6 @@ object PredTrans {
     predicates.foreach({
       case (scc, (pre, post)) =>
         val nodes = scc.vertexSet().asScala
-
-        if (DEBUG_WLP_PROG)
-          println("\nResult of SCC :" + nodes.map(b => b.getId) + "\n  Pre-condition: " + pre + "\n  Post-condition: " + post)
 
         if (nodes.contains(root)) {
           predicates.get(scc) match {
@@ -276,11 +304,11 @@ object PredTrans {
     assert(loopHead.isInstanceOf[ConditionalBlock], loopHead.toString)
     val loopBlks = loopBody.vertexSet().asScala
     if (DEBUG_WLP_LOOP) {
-      println("\n\n\nInfer WLP before loop " + loopBlks.map(b => b.getId) + " with loop head at block " + loopHead.getId + " for post-condition " + pred)
+      println("\n\n\nInfer WLP before loop " + loopBlks.map(b => b.getId) + " with loop head at block " + loopHead.getId + " with post-condition " + pred)
     }
 
     // Get all assigned variables
-    val assignedVars: Set[(String, TypeMirror)] = loopBlks.foldLeft(new HashSet[(String, TypeMirror)])({
+    val assignedVars: Array[(String, TypeMirror)] = loopBlks.foldLeft(new HashSet[(String, TypeMirror)])({
       (acc, block) =>
         getTopLevelStmts(block).foldLeft(acc)({
           (acc2, node) =>
@@ -292,7 +320,7 @@ object PredTrans {
               case _ => acc2
             }
         })
-    })
+    }).toArray
 
     val loopCond = getBranchCond(loopHead, loopBody, z3Solver)
 
@@ -319,24 +347,26 @@ object PredTrans {
       case _ =>
     })
 
-    val loopBodyWlp = wlpProg(loopHead, newGraph, loopInv, z3Solver)
+    val loopBodyWlp = wlpProg(loopHead, newGraph, pred, z3Solver)
     val body: Expr = {
       val body = z3Solver.mkAnd(
         z3Solver.mkImplies(z3Solver.mkAnd(loopCond, loopInv), loopBodyWlp),
         z3Solver.mkImplies(z3Solver.mkAnd(z3Solver.mkNot(loopCond), loopInv), pred)
       )
       if (assignedVars.nonEmpty) {
+        val vars = assignedVars.foldLeft((List[Expr](), List[Expr]()))({
+          case (acc, (name: String, typ: TypeMirror)) =>
+            val freshName = Utils.genRandStr()
+            if (typ.getKind == TypeKind.INT) (z3Solver.mkIntVar(name) :: acc._1, z3Solver.mkIntVar(freshName) :: acc._2)
+            else if (typ.getKind == TypeKind.BOOLEAN) (z3Solver.mkBoolVar(name) :: acc._1, z3Solver.mkBoolVar(freshName) :: acc._2)
+            else {
+              assert(false, typ)
+              acc
+            }
+        })
         z3Solver.mkForall(
-          assignedVars.toArray.map({
-            case (name, typ) =>
-              if (typ.getKind == TypeKind.INT) z3Solver.mkIntVar(name)
-              else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
-              else {
-                assert(false, typ)
-                z3Solver.mkFalse()
-              }
-          }),
-          body
+          vars._2.toArray,
+          body.substitute(vars._1.toArray, vars._2.toArray)
         )
       }
       else {
@@ -378,6 +408,7 @@ object PredTrans {
 
   // If there is no parent tree of this expression tree succeeding it in the same basic block
   def isTopLevelStmt(node: Node): Boolean = {
+    if (node.getTree != null && node.getTree.isInstanceOf[StatementTree]) return true
     val block = node.getBlock.asInstanceOf[RegularBlock].getContents.asScala
     val idx = block.indexOf(node)
     !block.zipWithIndex.exists({

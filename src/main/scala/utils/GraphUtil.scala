@@ -3,6 +3,7 @@ package utils
 import java.io.{File, IOException}
 import java.util
 
+import analysis.PredTrans
 import org.checkerframework.dataflow.cfg.block._
 import org.checkerframework.dataflow.cfg.{ControlFlowGraph, DOTCFGVisualizer}
 import org.jgrapht.Graph
@@ -71,7 +72,9 @@ object GraphUtil {
       override def getName(block: Block): String = block.getId.toString
     }
     val vertexLabelProvider = new ComponentNameProvider[Block]() {
-      override def getName(block: Block): String = block.getId.toString + "\n" + block.toString
+      override def getName(block: Block): String = {
+        block.getId.toString + " [" + block.getType.toString + "]\n" + PredTrans.getTopLevelStmts(block).foldLeft("")((acc, s) => acc + s + "\n")
+      }
     }
     val dotExp = new DOTExporter[Block, DefaultEdge](vertexIdProvider, vertexLabelProvider, null)
     val dotFile = fileName+".dot"

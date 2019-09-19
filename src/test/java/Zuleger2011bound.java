@@ -5,18 +5,18 @@ abstract public class Zuleger2011bound {
     abstract boolean nonDet();
     abstract int nonDetInt();
 
-    void Ex1(int n) {
+    void Ex1(int n, boolean b) {
         int i=0;
         int j;
         int R=0;
         while(i<n) {
             i=i+1;
             j=0;
-            boolean b = nonDet();
+            // boolean b = nonDet();
             while(i<n && b) {
                 i=i+1;
                 j=j+1;
-                b = nonDet();
+                // b = nonDet();
                 R=R+1;
                 // {R≤i}
             }
