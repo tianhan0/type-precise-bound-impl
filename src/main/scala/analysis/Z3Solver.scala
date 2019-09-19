@@ -42,6 +42,14 @@ class Z3Solver {
     res
   }
 
+  def checkSAT(asts: AST*): Boolean = {
+    push()
+    asts.foreach(ast => mkAssert(ast))
+    val res = checkSAT
+    pop()
+    res
+  }
+
   /**
     *
     * @param n: We want n models

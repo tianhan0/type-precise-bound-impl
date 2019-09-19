@@ -25,10 +25,7 @@ object PredTrans {
   val DEBUG_WLP_BLOCK = false
 
   // Compute the weakest precondition of a given predicate over a given AST node (representing basic statements, instead of compound statements)
-  def wlpBasic(node: Node, pred: BoolExpr, z3Solver: Z3Solver): BoolExpr = {
-    if (node.getBlock.isInstanceOf[ExceptionBlock]) return pred
-
-    val tree = node.getTree
+  def wlpBasic(tree: Tree, pred: BoolExpr, z3Solver: Z3Solver): BoolExpr = {
     tree match {
       case variableTree: VariableTree =>
         val x = {
@@ -64,8 +61,8 @@ object PredTrans {
       case assertTree: AssertTree =>
         z3Solver.mkImplies(transExpr(assertTree.getCondition, z3Solver), pred)
 
-      case expressionTree: ExpressionTree =>
-        val shouldVisit = isTopLevelStmt(node)
+      case expressionTree: ExpressionTree => pred
+        /*val shouldVisit = isTopLevelStmt(node)
         if (shouldVisit) return pred
         expressionTree.getKind match {
           case Tree.Kind.POSTFIX_DECREMENT => ??? // TODO
@@ -85,7 +82,7 @@ object PredTrans {
               assert(false, tree.toString)
               z3Solver.mkFalse()
             }
-        }
+        }*/
 
       case _ => pred
     }
@@ -100,7 +97,7 @@ object PredTrans {
           (accPred, node) => {
             if (node.getTree != null) {
               // Compute the weakest precondition of the instruction
-              val newPred = PredTrans.wlpBasic(node, accPred, z3Solver)
+              val newPred = PredTrans.wlpBasic(node.getTree, accPred, z3Solver)
               if (DEBUG_WLP_BLOCK) {
                 println("WLP of statement " + node.getTree + " before predicate " + accPred + " is predicate " + newPred)
                 /*z3Solver.push()

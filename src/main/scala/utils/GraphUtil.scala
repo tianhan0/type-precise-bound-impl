@@ -4,8 +4,12 @@ import java.io.{File, IOException}
 import java.util
 
 import analysis.PredTrans
+import com.sun.source.tree.{AssignmentTree, BinaryTree, ExpressionTree, IdentifierTree, ParenthesizedTree, Tree, UnaryTree, VariableTree}
+import javax.lang.model.`type`.{TypeKind, TypeMirror}
 import org.checkerframework.dataflow.cfg.block._
+import org.checkerframework.dataflow.cfg.node.Node
 import org.checkerframework.dataflow.cfg.{ControlFlowGraph, DOTCFGVisualizer}
+import org.checkerframework.javacutil.TreeUtils
 import org.jgrapht.Graph
 import org.jgrapht.alg.connectivity.KosarajuStrongConnectivityInspector
 import org.jgrapht.alg.cycle.{CycleDetector, JohnsonSimpleCycles}
@@ -15,6 +19,7 @@ import org.jgrapht.io.{ComponentNameProvider, DOTExporter}
 import org.jgrapht.traverse.TopologicalOrderIterator
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable.HashSet
 
 /**
   * @author Tianhan Lu
@@ -137,7 +142,62 @@ object GraphUtil {
 
 case class MyCFG(cfg: ControlFlowGraph) {
   val graph: DefaultDirectedGraph[Block, DefaultEdge] = GraphUtil.cfgToJgraphtGraph(cfg)
+  val allVars: Set[(String, TypeMirror)] = getAllVars(graph)
   // val simCycles: Set[List[Block]] = GraphUtil.getAllSimpleCycles(graph)
+
+  def getAllVars(graph: Graph[Block, DefaultEdge]): Set[(String, TypeMirror)] = {
+    def getVars(tree: Tree): Set[(String, TypeMirror)] = {
+      if (tree == null) return new HashSet[(String, TypeMirror)]
+      tree match {
+        case expressionTree: ExpressionTree =>
+          expressionTree match {
+            case identifierTree: IdentifierTree =>
+              val typ = TreeUtils.typeOf(expressionTree)
+              val isInt = typ.getKind == TypeKind.INT
+              val isBool = typ.getKind == TypeKind.BOOLEAN
+              // We only consider boolean or integer variables
+              if (isInt) HashSet[(String, TypeMirror)]((identifierTree.toString, typ))
+              else if (isBool) HashSet[(String, TypeMirror)]((identifierTree.toString, typ))
+              else {
+                // assert(false, expressionTree.toString + ": " + typ)
+                new HashSet[(String, TypeMirror)]
+              }
+
+            case binaryTree: BinaryTree =>
+              binaryTree.getKind match {
+                case Tree.Kind.CONDITIONAL_AND | Tree.Kind.CONDITIONAL_OR | Tree.Kind.DIVIDE | Tree.Kind.EQUAL_TO | Tree.Kind.GREATER_THAN | Tree.Kind.GREATER_THAN_EQUAL | Tree.Kind.LESS_THAN | Tree.Kind.LESS_THAN_EQUAL | Tree.Kind.MINUS | Tree.Kind.MULTIPLY | Tree.Kind.NOT_EQUAL_TO | Tree.Kind.PLUS => getVars(binaryTree.getLeftOperand) ++ getVars(binaryTree.getRightOperand)
+                case _ => assert(false, expressionTree.toString); new HashSet[(String, TypeMirror)]
+              }
+
+            case unaryTree: UnaryTree =>
+              unaryTree.getKind match {
+                case Tree.Kind.UNARY_PLUS | Tree.Kind.UNARY_MINUS | Tree.Kind.LOGICAL_COMPLEMENT => getVars(unaryTree.getExpression)
+                case _ => assert(false, expressionTree.toString); new HashSet[(String, TypeMirror)]
+              }
+
+            case parenthesizedTree: ParenthesizedTree => getVars(parenthesizedTree.getExpression)
+
+            case assignmentTree: AssignmentTree =>
+              getVars(assignmentTree.getExpression) + ((assignmentTree.getVariable.toString, TreeUtils.typeOf(assignmentTree.getVariable)))
+
+            case _ => new HashSet[(String, TypeMirror)]
+          }
+        case variableTree: VariableTree =>
+          val initializer = variableTree.getInitializer
+          getVars(initializer) + ((variableTree.getName.toString, TreeUtils.typeOf(variableTree.getType)))
+        case _ => new HashSet[(String, TypeMirror)]
+      }
+    }
+
+    graph.vertexSet().asScala.flatMap({
+      case reg: RegularBlock => reg.getContents.asScala
+      case _ => List[Node]()
+    }).foldLeft(new HashSet[(String, TypeMirror)])({
+      (acc, node) =>
+        if (node != null) acc ++ getVars(node.getTree)
+        else acc
+    })
+  }
 }
 
 // References
