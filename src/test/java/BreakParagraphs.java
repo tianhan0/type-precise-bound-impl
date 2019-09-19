@@ -14,10 +14,11 @@ abstract class BreakParagraphs {
                 if (nonDetInt()) {
                     m=m+r;
                 } else {
-                    R1=R1+m;
+                    int m1 = m;
                     assert (i<=n);
                     // R1<=i, i<=n
                     m=0;
+                    R1=R1+m1;
                 }
             }
         }

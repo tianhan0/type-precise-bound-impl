@@ -18,8 +18,8 @@ public class AddFriends {
         identities=identities+1;
         i=0;
         while (i<friends) {
-            R2=R2+identities;
             i=i+1;
+            R2=R2+identities;
         }
     }
 }

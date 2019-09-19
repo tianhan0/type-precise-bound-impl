@@ -41,8 +41,11 @@ object PredTrans {
             z3Solver.mkFalse()
           }
         }
-        val expr = transExpr(variableTree.getInitializer, z3Solver)
-        pred.substitute(x, expr).asInstanceOf[BoolExpr]
+        if (variableTree.getInitializer == null) pred
+        else {
+          val expr = transExpr(variableTree.getInitializer, z3Solver)
+          pred.substitute(x, expr).asInstanceOf[BoolExpr]
+        }
 
       case assignmentTree: AssignmentTree => // Note that this is subtype of ExpressionTree
         val x = {
@@ -356,7 +359,13 @@ object PredTrans {
       if (assignedVars.nonEmpty) {
         val vars = assignedVars.foldLeft((List[Expr](), List[Expr]()))({
           case (acc, (name: String, typ: TypeMirror)) =>
-            val freshName = Utils.genRandStr()
+            val freshName = {
+              var r = Utils.genRandStr()
+              while (z3Solver.vars.keys.exists(str => str == r)) {
+                r = Utils.genRandStr()
+              }
+              r
+            }
             if (typ.getKind == TypeKind.INT) (z3Solver.mkIntVar(name) :: acc._1, z3Solver.mkIntVar(freshName) :: acc._2)
             else if (typ.getKind == TypeKind.BOOLEAN) (z3Solver.mkBoolVar(name) :: acc._1, z3Solver.mkBoolVar(freshName) :: acc._2)
             else {

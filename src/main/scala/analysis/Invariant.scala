@@ -324,4 +324,20 @@ object Invariant {
         z3Solver.mkIntVal(0))
     )*/
   }
+
+  def rmDupInvs(invs: Set[BoolExpr], z3Solver: Z3Solver): Set[BoolExpr] = {
+    invs.foldLeft(new HashSet[BoolExpr])({
+      (acc, inv) =>
+        val canBeImplied = acc.exists(p => {
+          val implication = z3Solver.mkImplies(p, inv)
+          z3Solver.push()
+          z3Solver.mkAssert(implication)
+          val res = z3Solver.checkSAT
+          z3Solver.pop()
+          res
+        })
+        if (canBeImplied) acc
+        else acc + inv
+    })
+  }
 }
