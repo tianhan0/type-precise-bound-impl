@@ -363,8 +363,12 @@ object PredTrans {
               }
               r
             }
-            if (typ.getKind == TypeKind.INT) (z3Solver.mkIntVar(name) :: acc._1, z3Solver.mkIntVar(freshName) :: acc._2)
-            else if (typ.getKind == TypeKind.BOOLEAN) (z3Solver.mkBoolVar(name) :: acc._1, z3Solver.mkBoolVar(freshName) :: acc._2)
+            if (typ.getKind == TypeKind.INT) {
+              (z3Solver.mkIntVar(name) :: acc._1, z3Solver.mkIntVar(freshName) :: acc._2)
+            }
+            else if (typ.getKind == TypeKind.BOOLEAN) {
+              (z3Solver.mkBoolVar(name) :: acc._1, z3Solver.mkBoolVar(freshName) :: acc._2)
+            }
             else {
               assert(false, typ)
               acc

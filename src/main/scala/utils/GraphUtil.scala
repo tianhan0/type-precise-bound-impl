@@ -138,12 +138,6 @@ object GraphUtil {
     }
     res
   }
-}
-
-case class MyCFG(cfg: ControlFlowGraph) {
-  val graph: DefaultDirectedGraph[Block, DefaultEdge] = GraphUtil.cfgToJgraphtGraph(cfg)
-  val allVars: Set[(String, TypeMirror)] = getAllVars(graph)
-  // val simCycles: Set[List[Block]] = GraphUtil.getAllSimpleCycles(graph)
 
   def getAllVars(graph: Graph[Block, DefaultEdge]): Set[(String, TypeMirror)] = {
     def getVars(tree: Tree): Set[(String, TypeMirror)] = {
@@ -198,6 +192,11 @@ case class MyCFG(cfg: ControlFlowGraph) {
         else acc
     })
   }
+}
+
+case class MyCFG(cfg: ControlFlowGraph) {
+  val graph: DefaultDirectedGraph[Block, DefaultEdge] = GraphUtil.cfgToJgraphtGraph(cfg)
+  // val simCycles: Set[List[Block]] = GraphUtil.getAllSimpleCycles(graph)
 }
 
 // References

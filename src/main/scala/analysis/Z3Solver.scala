@@ -11,7 +11,7 @@ import scala.collection.immutable.HashMap
   */
 class Z3Solver {
   val ctx: Context = new Context
-  var vars: HashMap[String, Expr] = new HashMap[String, Expr]
+  var vars: Map[String, Expr] = new HashMap[String, Expr]
   val DEBUG: Boolean = false
 
   val solver: Solver = {
@@ -142,6 +142,7 @@ class Z3Solver {
   def mkAnd(lhs: AST, rhs: AST): BoolExpr = ctx.mkAnd(lhs.asInstanceOf[BoolExpr], rhs.asInstanceOf[BoolExpr])
 
   def mkAnd(ast: AST*): BoolExpr = {
+    if (ast.length <= 1) assert(false)
     if (ast.isEmpty) assert(false)
     ctx.mkAnd(ast.map(a => a.asInstanceOf[BoolExpr]): _*)
   }
@@ -149,6 +150,7 @@ class Z3Solver {
   def mkOr(lhs: AST, rhs: AST): BoolExpr = ctx.mkOr(lhs.asInstanceOf[BoolExpr], rhs.asInstanceOf[BoolExpr])
 
   def mkOr(ast: AST*): BoolExpr = {
+    if (ast.length <= 1) assert(false)
     if (ast.isEmpty) assert(false)
     ctx.mkOr(ast.map(a => a.asInstanceOf[BoolExpr]): _*)
   }

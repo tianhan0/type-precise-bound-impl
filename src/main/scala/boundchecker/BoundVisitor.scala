@@ -22,9 +22,9 @@ import scala.util.matching.Regex
 class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotatedTypeFactory](checker) {
   val DEBUG_VISIT_ASSIGN = false
   val DEBUG_LOCAL_INV = true
-  val DEBUG_GLOBAL_INV = true
+  val DEBUG_GLOBAL_INV = false
 
-  var resVarRegex: Regex = """R(\d*)""".r
+  val resVarRegex: Regex = """R(\d*)""".r
 
   var cfgs = new HashMap[MethodTree, MyCFG]()
   var solvers = new HashMap[MethodTree, Z3Solver]
@@ -49,7 +49,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         GraphUtil.printGraphtoPDF(myCFG.graph, Utils.OUTPUT_DIR + Utils.SEPARATOR + classTree.getSimpleName + "_" + node.getName.toString)
       }
 
-      globalInvs = globalInvs + (node -> Invariant.genNewGlobInv(myCFG.allVars, z3Solver))
+      globalInvs = globalInvs + (node -> Invariant.genNewGlobInv(GraphUtil.getAllVars(myCFG.graph), z3Solver))
     }
     catch {
       case ex: Exception =>
@@ -89,7 +89,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
             if (DEBUG_VISIT_ASSIGN) println("Visiting assignment in block: " + curBlock.getId)
 
             // GraphUtil.printGraph(myCFG.graph)
-            val invs = Invariant.inferLocalInv(curBlock, myCFG, z3Solver.mkTrue(), z3Solver)
+            val invs = Invariant.inferLocalInv(curBlock, myCFG.graph, GraphUtil.getAllVars(myCFG.graph), z3Solver.mkTrue(), z3Solver)
             if (invs.isEmpty) issueWarning(node, "No invariant is inferred!")
 
             if (DEBUG_LOCAL_INV) {
