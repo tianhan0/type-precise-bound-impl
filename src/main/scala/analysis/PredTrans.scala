@@ -322,10 +322,10 @@ object PredTrans {
         })
     }).toArray
 
-    val loopCond = getBranchCond(loopHead, loopBody, z3Solver)
+    val branching = getBranchCond(loopHead, loopBody, z3Solver)
 
     if (DEBUG_WLP_LOOP) println("Assigned vars: " + assignedVars)
-    if (DEBUG_WLP_LOOP) println("Loop condition: " + loopCond)
+    if (DEBUG_WLP_LOOP) println("Loop condition: " + branching)
 
     // Find the weakest precondition when executing the loop body once
     val newGraph = GraphUtil.cloneGraph(loopBody)
@@ -349,6 +349,10 @@ object PredTrans {
 
     val loopBodyWlp = wlpProg(loopHead, newGraph, pred, z3Solver)
     val body: Expr = {
+      val loopCond = {
+        if (loopBlks.contains(loopHead.asInstanceOf[ConditionalBlock].getThenSuccessor)) branching
+        else z3Solver.mkNot(branching)
+      }
       val body = z3Solver.mkAnd(
         z3Solver.mkImplies(z3Solver.mkAnd(loopCond, loopInv), loopBodyWlp),
         z3Solver.mkImplies(z3Solver.mkAnd(z3Solver.mkNot(loopCond), loopInv), pred)
@@ -358,7 +362,7 @@ object PredTrans {
           case (acc, (name: String, typ: TypeMirror)) =>
             val freshName = {
               var r = Utils.genRandStr()
-              while (z3Solver.vars.keys.exists(str => str == r)) {
+              while (z3Solver.vars.contains(r)) {
                 r = Utils.genRandStr()
               }
               r

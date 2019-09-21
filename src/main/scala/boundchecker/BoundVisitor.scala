@@ -151,7 +151,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
             val wlp = PredTrans.wlpBasic(stmt, inv, z3Solver)
             val implication = z3Solver.mkImplies(inv, wlp)
             val res = Invariant.checkAssert(implication, myCFG.allVars, z3Solver)
-            if (res) acc + inv
+            if (res._1) acc + inv
             else acc
         })
         if (DEBUG_GLOBAL_INV) {

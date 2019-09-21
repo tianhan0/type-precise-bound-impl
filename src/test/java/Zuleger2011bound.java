@@ -18,14 +18,13 @@ abstract public class Zuleger2011bound {
                 j=j+1;
                 // b = nonDet();
                 R=R+1;
-                // {R≤i} {i<n}
+                // {R≤i} {i<=n}
             }
             if (j>0) {
                 i=i-1;
             }
         }
-        assert(R<n);
-        // Bound: R<n
+        assert(R<=n); // Bound
     }
 
     /*void bin_search_StepSize2(int r, int s) {

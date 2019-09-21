@@ -137,6 +137,10 @@ object Invariant {
                   }
                 }
 
+                /*if (inv.toString == "(< (+ i (* (- 1) n)) 0)" || inv.toString == "(< (+ (* (- 1) n) i) 0)") {
+                  loopInvs.foreach(inv => println(inv))
+                }*/
+
                 // Make the inner loop acyclic by removing the edge starting from the current block
                 val toRemove = {
                   val thenBlk = curBlock.asInstanceOf[ConditionalBlock].getThenSuccessor
@@ -152,7 +156,15 @@ object Invariant {
               }
 
               // Process the current block
-              acc = PredTrans.wlpBlock(curBlock, acc, z3Solver)
+              // We should also collect path constraints here!
+              curBlock match {
+                case condBlk: ConditionalBlock =>
+                  val nxtBlk = if (j == simCycle.size - 1) simCycle.head else simCycle(j + 1)
+                  val branching = PredTrans.getBranchCond(condBlk, newGraph, z3Solver)
+                  val cond = if (condBlk.getThenSuccessor == nxtBlk) branching else z3Solver.mkNot(branching)
+                  acc = z3Solver.mkImplies(cond, acc)
+                case _ => acc = PredTrans.wlpBlock(curBlock, acc, z3Solver)
+              }
               if (DEBUG_LOCAL_INV) {
                 println(indentStr + "<-curBlock " + curBlock.getId + " wlp: " + acc + "\n")
               }
@@ -167,13 +179,17 @@ object Invariant {
 
           val implication = z3Solver.mkImplies(inv, acc) // TODO: Which direction?
           val res = Invariant.checkAssert(implication, allVars, z3Solver)
-          if (DEBUG_LOCAL_INV)
-            println(indentStr + "  " +
-              "Check the validity of inv " + inv.toString + "\nZ3 result: " + res + "\n")
-          res
+          if (DEBUG_LOCAL_INV) {
+            println(indentStr + "  " + "Check the validity of inv " + inv.toString + " via " + res._2)
+            println(indentStr + "  " + "Z3 result: " + res._1 + "\n")
+          }
+          res._1
         })
     })
-    if (DEBUG_LOCAL_INV) println(indentStr + "---Infer invariant right after block " + loc.getId + " finishes.")
+    if (DEBUG_LOCAL_INV) {
+      println(indentStr + "---Infer invariant right after block " + loc.getId + " finishes.")
+      println(indentStr + "---Valid invariants are: " + validInvs.foldLeft("\n")((acc, b) => acc + b + "\n"))
+    }
     validInvs
   }
 
@@ -193,54 +209,54 @@ object Invariant {
       pos.map(n => -n) ++ pos
     }
 
-    if (!DEBUG_LOCAL_INV) {
-      allVars.zipWithIndex.foldLeft(new HashMap[String, BoolExpr])({
-        case (acc, ((name1, typ1), idx1)) =>
-          allVars.zipWithIndex.foldLeft(acc)({
-            case (accp, ((name2, typ2), idx2)) =>
-              if (idx2 > idx1) {
-                (getTyp(typ1), getTyp(typ2)) match {
-                  case (TypeKind.INT, TypeKind.INT) =>
-                    val var1 = z3Solver.mkIntVar(name1)
-                    val var2 = z3Solver.mkIntVar(name2)
+    allVars.zipWithIndex.foldLeft(new HashMap[String, BoolExpr])({
+      case (acc, ((name1, typ1), idx1)) =>
+        allVars.zipWithIndex.foldLeft(acc)({
+          case (accp, ((name2, typ2), idx2)) =>
+            if (idx2 > idx1) {
+              (getTyp(typ1), getTyp(typ2)) match {
+                case (TypeKind.INT, TypeKind.INT) =>
+                  val var1 = z3Solver.mkIntVar(name1)
+                  val var2 = z3Solver.mkIntVar(name2)
 
-                    coeff.foldLeft(accp)({
-                      (acc1, c1) =>
-                        coeff.foldLeft(acc1)({
-                          (acc2, c2) =>
-                            constants.foldLeft(acc2)({
-                              (acc3, c3) =>
-                                val expr = z3Solver.mkLe(
-                                  z3Solver.mkAdd(
-                                    z3Solver.mkMul(z3Solver.mkIntVal(c1), var1),
-                                    z3Solver.mkMul(z3Solver.mkIntVal(c2), var2)
-                                  ),
-                                  z3Solver.mkIntVal(c3)
+                  coeff.foldLeft(accp)({
+                    (acc1, c1) =>
+                      coeff.foldLeft(acc1)({
+                        (acc2, c2) =>
+                          constants.foldLeft(acc2)({
+                            (acc3, c3) =>
+                              if (c1 * c2 > 0) acc3
+                              else {
+                                val add = z3Solver.mkAdd(
+                                  if (c1 == 1) var1 else z3Solver.mkMul(z3Solver.mkIntVal(c1), var1),
+                                  if (c2 == 1) var2 else z3Solver.mkMul(z3Solver.mkIntVal(c2), var2)
                                 )
-                                acc3 + (expr.toString -> expr)
-                            })
-                        })
-                    })
-                  case _ => accp
-                }
+                                val le = z3Solver.mkLe(add, z3Solver.mkIntVal(c3))
+                                val lt = z3Solver.mkLt(add, z3Solver.mkIntVal(c3))
+                                acc3 + (le.toString -> le) + (lt.toString -> lt)
+                              }
+                          })
+                      })
+                  })
+                case _ => accp
               }
-              else accp
-          })
-      }).values.toSet + z3Solver.mkTrue()
-    }
-    else {
+            }
+            else accp
+        })
+    }).values.toSet + z3Solver.mkTrue()
+    /*else {
       // When debugging using this branch, keep in mind that while the following invariant will be included
       // in all invocation to this method, if we are not using this branch, the following invariant might not
       // be included in all invocation to this method!
       HashSet[BoolExpr](
         z3Solver.mkLe(
           z3Solver.mkAdd(
-            z3Solver.mkMul(z3Solver.mkIntVal(1), z3Solver.mkIntVar("R")),
-            z3Solver.mkMul(z3Solver.mkIntVal(-1), z3Solver.mkIntVar("i"))
+            z3Solver.mkMul(z3Solver.mkIntVal(1), z3Solver.mkIntVar("i")),
+            z3Solver.mkMul(z3Solver.mkIntVal(-1), z3Solver.mkIntVar("n"))
           ),
           z3Solver.mkIntVal(0))
       )
-    }
+    }*/
   }
 
   def genNewGlobInv(allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Set[BoolExpr] = {
@@ -256,7 +272,7 @@ object Invariant {
   }
 
   // Return true if the assertion is valid
-  def checkAssert(assertion: BoolExpr, allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Boolean = {
+  def checkAssert(assertion: BoolExpr, allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): (Boolean, BoolExpr) = {
     val toCheck = {
       z3Solver.mkNot(
         z3Solver.mkForall(
@@ -274,7 +290,7 @@ object Invariant {
       )
     }
     val res = z3Solver.checkSAT(toCheck)
-    !res
+    (!res, toCheck)
   }
 
   def rmDupInvs(invs: Set[BoolExpr], z3Solver: Z3Solver): Set[BoolExpr] = {
