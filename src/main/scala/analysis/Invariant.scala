@@ -1,6 +1,6 @@
 package analysis
 
-import com.microsoft.z3.BoolExpr
+import com.microsoft.z3.{BoolExpr, Expr}
 import javax.lang.model.`type`.{TypeKind, TypeMirror}
 import org.checkerframework.dataflow.cfg.block.{Block, ConditionalBlock, SingleSuccessorBlock}
 import org.jgrapht.Graph
@@ -304,6 +304,12 @@ object Invariant {
     }
     val res = z3Solver.checkSAT(toCheck)
     (!res, toCheck)
+  }
+
+  def getConjunction(invs: Set[BoolExpr], z3Solver: Z3Solver): Expr = {
+    if (invs.isEmpty) z3Solver.mkTrue()
+    else if (invs.size == 1) invs.head
+    else z3Solver.mkAnd(invs.toSeq: _*)
   }
 }
 

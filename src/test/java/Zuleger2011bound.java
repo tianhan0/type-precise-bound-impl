@@ -24,7 +24,8 @@ abstract public class Zuleger2011bound {
                 i=i-1;
             }
         }
-        assert(R<=n); // Bound
+        assert (i <= n) : "global";
+        assert (R <= n) : "bound";
     }
 
     /*void bin_search_StepSize2(int r, int s) {

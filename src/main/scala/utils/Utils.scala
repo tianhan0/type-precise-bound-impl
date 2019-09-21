@@ -48,6 +48,10 @@ object Utils {
 
   val MILLION = 1000000
 
+  val BOUND_STR = "bound"
+
+  val GLOBAL_STR = "global"
+
   def genRandStr(len: Int=4): String = {
     assert(len>0)
     val r = new scala.util.Random()

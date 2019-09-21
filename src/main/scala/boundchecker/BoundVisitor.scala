@@ -1,8 +1,9 @@
 package boundchecker
 
 import analysis.{Invariant, PredTrans, Z3Solver}
-import com.microsoft.z3.BoolExpr
+import com.microsoft.z3.{BoolExpr, Expr}
 import com.sun.source.tree._
+import javax.lang.model.`type`.TypeKind
 import org.checkerframework.common.basetype.{BaseAnnotatedTypeFactory, BaseTypeChecker, BaseTypeVisitor}
 import org.checkerframework.dataflow.cfg.CFGBuilder
 import org.checkerframework.dataflow.cfg.block.RegularBlock
@@ -22,7 +23,8 @@ import scala.util.matching.Regex
 class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotatedTypeFactory](checker) {
   val DEBUG_VISIT_ASSIGN = false
   val DEBUG_LOCAL_INV = true
-  val DEBUG_GLOBAL_INV = true
+  val DEBUG_GLOBAL_INV = false
+  val DEBUG_VERIFICATION = true
 
   val resVarRegex: Regex = """R(\d*)""".r
 
@@ -30,6 +32,15 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   var solvers = new HashMap[MethodTree, Z3Solver]
   var localInvs = new HashMap[MethodTree, HashMap[Tree, Set[BoolExpr]]]
   var globalInvs = new HashMap[MethodTree, Set[BoolExpr]]
+  var assumptions = new HashMap[MethodTree, Set[BoolExpr]] // Additional unchecked global invariants
+  var bounds = new HashMap[MethodTree, BoolExpr]
+
+  Runtime.getRuntime.addShutdownHook(new Thread() {
+    override def run(): Unit = {
+      checkBound()
+    }
+    // Reference: SourceChecker.typeProcessingStart
+  })
 
   override def visitMethod(node: MethodTree, p: Void): Void = {
     val treePath = atypeFactory.getPath(node)
@@ -61,17 +72,10 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   }
 
   override def visitAssignment(node: AssignmentTree, p: Void): Void = {
-    val treePath = atypeFactory.getPath(node)
-    val enclosingMethod: MethodTree = TreeUtils.enclosingMethod(treePath)
-    assert(enclosingMethod != null)
-
-    val z3Solver = solvers.getOrElse(enclosingMethod, new Z3Solver)
-    solvers = solvers + (enclosingMethod -> z3Solver)
-
-    val myCFG: MyCFG = cfgs.getOrElse(enclosingMethod, null)
+    val (myCFG, z3Solver, enclosingMethod) = prep(node)
 
     // Guess local invariants
-    resVarRegex.findFirstIn(node.getVariable.toString) match {
+    getResVar(node.getVariable.toString) match {
       case Some(resVarName) =>
         val blocks = myCFG.graph.vertexSet().asScala.filter({
           case reg: RegularBlock => reg.getContents.asScala.zipWithIndex.exists({
@@ -113,6 +117,38 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   }
 
   override def visitVariable(node: VariableTree, p: Void): Void = {
+    val (myCFG, z3Solver, enclosingMethod) = prep(node)
+
+    // Verify global invariants
+    verifyGlobInvs(node, enclosingMethod, myCFG, z3Solver)
+
+    super.visitVariable(node, p)
+  }
+
+  override def visitAssert(node: AssertTree, p: Void): Void = {
+    val (myCFG, z3solver, enclosingMethod) = prep(node)
+
+    if (node.getDetail != null) {
+      assert(node.getCondition != null)
+      val expr = PredTrans.transExpr(node.getCondition, z3solver).asInstanceOf[BoolExpr]
+
+      if (node.getDetail.toString == "\""+Utils.BOUND_STR+"\"") {
+        bounds.get(enclosingMethod) match {
+          case Some(_) => assert(false, "One program should only have one bound!")
+          case None => bounds = bounds + (enclosingMethod -> expr)
+        }
+      }
+      else if (node.getDetail.toString == "\""+Utils.GLOBAL_STR+"\"") {
+        assumptions.get(enclosingMethod) match {
+          case Some(set) => assumptions = assumptions + (enclosingMethod -> (set + expr))
+          case None => assumptions = assumptions + (enclosingMethod -> HashSet(expr))
+        }
+      }
+    }
+    super.visitAssert(node, p)
+  }
+
+  private def prep(node: Tree): (MyCFG, Z3Solver, MethodTree) = {
     val treePath = atypeFactory.getPath(node)
     val enclosingMethod: MethodTree = TreeUtils.enclosingMethod(treePath)
     assert(enclosingMethod != null)
@@ -121,11 +157,9 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
     solvers = solvers + (enclosingMethod -> z3Solver)
 
     val myCFG: MyCFG = cfgs.getOrElse(enclosingMethod, null)
+    assert(myCFG != null)
 
-    // Verify global invariants
-    verifyGlobInvs(node, enclosingMethod, myCFG, z3Solver)
-
-    super.visitVariable(node, p)
+    (myCFG, z3Solver, enclosingMethod)
   }
 
   private def issueWarning(node: Object, msg: String): Unit = {
@@ -162,5 +196,91 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         globalInvs = globalInvs + (method -> newGlobInvs)
       case None =>
     }
+  }
+
+  def getResVar(name: String): Option[String] = resVarRegex.findFirstIn(name)
+
+  def checkBound(): Unit = {
+    println("Bound verification starts:")
+
+    bounds.foreach({
+      case (methodTree, bound) =>
+        val z3Solver = solvers.getOrElse(methodTree, new Z3Solver)
+        val myCFG: MyCFG = cfgs.getOrElse(methodTree, null)
+        assert(myCFG != null)
+
+        val boundVar = z3Solver.mkIntVar(Utils.BOUND_STR)
+        val args: Set[Expr] = methodTree.getParameters.asScala.foldLeft(HashSet[Expr]())({
+          (acc, variableTree) =>
+            val name = variableTree.getName.toString
+            val typ = TreeUtils.typeOf(variableTree.getType)
+            val variable = {
+              if (typ.getKind == TypeKind.INT) z3Solver.mkIntVar(name)
+              else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
+              else {
+                assert(false)
+                z3Solver.mkFalse()
+              }
+            }
+            acc + variable
+        })
+
+        val (localVars, globalVars) = myCFG.allVars.foldLeft(HashSet[Expr](), args + boundVar)({
+          case (acc, (name, typ)) =>
+            getResVar(name) match {
+              case Some(v) =>
+                assert(typ.getKind == TypeKind.INT, "Resource variables should be int-typed!")
+                (acc._1, acc._2 + z3Solver.mkIntVar(name))
+              case _ =>
+                val variable = if (typ.getKind == TypeKind.INT) z3Solver.mkIntVar(name)
+                else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
+                else {
+                  assert(false)
+                  z3Solver.mkFalse()
+                }
+                if (!acc._2.contains(variable)) (acc._1 + variable, acc._2)
+                else acc
+            }
+        })
+        assert(localVars.intersect(globalVars).isEmpty)
+
+        val globals = {
+          val g = globalInvs.get(methodTree) match {
+            case Some(invs) => Invariant.getConjunction(invs, z3Solver)
+            case None => z3Solver.mkTrue()
+          }
+          val a = assumptions.get(methodTree) match {
+            case Some(invs) => Invariant.getConjunction(invs, z3Solver)
+            case None => z3Solver.mkTrue()
+          }
+          z3Solver.mkAnd(g, a)
+        }
+
+        val locals = {
+          localInvs.get(methodTree) match {
+            case Some(map) =>
+              map.foldLeft(z3Solver.mkTrue())({
+                case (acc, (tree, invs)) =>
+                  val l = Invariant.getConjunction(invs, z3Solver)
+                  val exists = z3Solver.mkExists(
+                    localVars.toArray,
+                    z3Solver.mkAnd(l, globals)
+                  )
+                  z3Solver.mkAnd(acc, exists)
+              })
+            case None => z3Solver.mkTrue()
+          }
+        }
+
+        val toCheck = z3Solver.mkForall(
+          globalVars.toArray,
+          z3Solver.mkImplies(locals, bound)
+        )
+        if (DEBUG_VERIFICATION) println(toCheck.toString)
+
+        val res = z3Solver.checkSAT(toCheck)
+        if (res) Utils.printGreenString("Bound " + bound.toString + " for method " + methodTree.getName + " is verified!")
+        else Utils.printRedString("Bound " + bound.toString + " for method " + methodTree.getName + " is not verified!")
+    })
   }
 }
