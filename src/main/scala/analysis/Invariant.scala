@@ -17,7 +17,7 @@ object Invariant {
   val DEBUG_LOCAL_INV = false
   val DEBUG_GEN_NEW_INV = false
 
-  var dp = new HashMap[Graph[Block, DefaultEdge], Set[BoolExpr]]
+  var dp = List[(Result, Set[BoolExpr])]()
 
   // Return the predicate s.t. if it is valid right after the end of the given block, then it will be valid again next time reaching the end of the given block
   def inferLocalInv(loc: Block,
@@ -26,6 +26,15 @@ object Invariant {
                     pred: BoolExpr, // The predicate abstracting the context under which invariants need to be inferred
                     z3Solver: Z3Solver,
                     indent: Int = 0): Set[BoolExpr] = {
+    val res = Result(loc, graph)
+    dp.foreach({
+      case (resp, inv) =>
+        if (resp.equals(res)) {
+          // println("!!!!!!!!!!!!!!!")
+          return inv
+        }
+    })
+
     val indentStr = " " * indent
     if (DEBUG_LOCAL_INV) println("\n\n\n" + indentStr + "---Infer invariant right after block " + loc.getId + " started:")
     val simCycles = GraphUtil.getAllSimpleCycles(graph)
@@ -123,7 +132,9 @@ object Invariant {
                 // Infer the weakest precondition before entering the inner loop
                 if (loopInvs.isEmpty) {
                   // Stop exploration because we cannot find loop invariants and hence cannot compute wlp!
-                  return new HashSet[BoolExpr]()
+                  val res = new HashSet[BoolExpr]()
+                  dp = (Result(loc, graph), res) :: dp
+                  return res
                 }
                 else {
                   // If any of the inferred inner loop's invariant may work, then we are happy :)
@@ -190,6 +201,8 @@ object Invariant {
       println(indentStr + "---Infer invariant right after block " + loc.getId + " finishes.")
       println(indentStr + "---Valid invariants are: " + validInvs.foldLeft("\n")((acc, b) => acc + b + "\n"))
     }
+
+    dp = (Result(loc, graph), validInvs) :: dp
     validInvs
   }
 
@@ -225,7 +238,7 @@ object Invariant {
                         (acc2, c2) =>
                           constants.foldLeft(acc2)({
                             (acc3, c3) =>
-                              if (c1 * c2 > 0) acc3
+                              if (c1 < 0 && c2 < 0) acc3
                               else {
                                 val add = z3Solver.mkAdd(
                                   if (c1 == 1) var1 else z3Solver.mkMul(z3Solver.mkIntVal(c1), var1),
@@ -292,16 +305,16 @@ object Invariant {
     val res = z3Solver.checkSAT(toCheck)
     (!res, toCheck)
   }
+}
 
-  def rmDupInvs(invs: Set[BoolExpr], z3Solver: Z3Solver): Set[BoolExpr] = {
-    invs.foldLeft(new HashSet[BoolExpr])({
-      (acc, inv) =>
-        val canBeImplied = acc.exists(p => {
-          val implication = z3Solver.mkImplies(p, inv)
-          z3Solver.checkSAT(implication)
-        })
-        if (canBeImplied) acc
-        else acc + inv
-    })
+case class Result(loc: Block, graph: Graph[Block, DefaultEdge]) {
+  override def equals(obj: Any): Boolean = {
+    obj match {
+      case res: Result =>
+        val r1 = loc == res.loc
+        val r2 = GraphUtil.isSameGraph(graph, res.graph)
+        r1 && r2
+      case _ => false
+    }
   }
 }

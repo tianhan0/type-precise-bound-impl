@@ -129,12 +129,12 @@ object GraphUtil {
   }
 
   def isSameGraph(g1: Graph[Block, DefaultEdge], g2: Graph[Block, DefaultEdge]): Boolean = {
-    val nodes1 = g1.vertexSet().asScala
-    val nodes2 = g2.vertexSet().asScala
+    val nodes1 = g1.vertexSet().asScala.map(b => b.getId).toSet
+    val nodes2 = g2.vertexSet().asScala.map(b => b.getId).toSet
     if (nodes1.union(nodes2) == nodes1 && nodes2.union(nodes1) == nodes2) {
-      val edges1 = g1.edgeSet().asScala
-      val edges2 = g2.edgeSet().asScala
-      false
+      val edges1 = g1.edgeSet().asScala.map(edge => (g1.getEdgeSource(edge).getId, g1.getEdgeTarget(edge).getId)).toSet
+      val edges2 = g2.edgeSet().asScala.map(edge => (g2.getEdgeSource(edge).getId, g2.getEdgeTarget(edge).getId)).toSet
+      edges1.union(edges2) == edges1 && edges2.union(edges1) == edges2
     }
     else false
   }
