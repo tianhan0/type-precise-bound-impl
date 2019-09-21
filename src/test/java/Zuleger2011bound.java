@@ -18,13 +18,13 @@ abstract public class Zuleger2011bound {
                 j=j+1;
                 // b = nonDet();
                 R=R+1;
-                // {R≤i}
+                // {R≤i} {i<n}
             }
             if (j>0) {
                 i=i-1;
             }
         }
-        // Global invariant: i<n
+        assert(R<n);
         // Bound: R<n
     }
 

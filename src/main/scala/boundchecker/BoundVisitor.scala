@@ -2,7 +2,7 @@ package boundchecker
 
 import analysis.{Invariant, PredTrans, Z3Solver}
 import com.microsoft.z3.BoolExpr
-import com.sun.source.tree.{AssignmentTree, MethodTree, Tree, VariableTree}
+import com.sun.source.tree._
 import org.checkerframework.common.basetype.{BaseAnnotatedTypeFactory, BaseTypeChecker, BaseTypeVisitor}
 import org.checkerframework.dataflow.cfg.CFGBuilder
 import org.checkerframework.dataflow.cfg.block.RegularBlock
@@ -22,7 +22,7 @@ import scala.util.matching.Regex
 class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotatedTypeFactory](checker) {
   val DEBUG_VISIT_ASSIGN = false
   val DEBUG_LOCAL_INV = true
-  val DEBUG_GLOBAL_INV = false
+  val DEBUG_GLOBAL_INV = true
 
   val resVarRegex: Regex = """R(\d*)""".r
 
@@ -68,48 +68,46 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
     val z3Solver = solvers.getOrElse(enclosingMethod, new Z3Solver)
     solvers = solvers + (enclosingMethod -> z3Solver)
 
+    val myCFG: MyCFG = cfgs.getOrElse(enclosingMethod, null)
+
     // Guess local invariants
     resVarRegex.findFirstIn(node.getVariable.toString) match {
       case Some(resVarName) =>
-        cfgs.get(enclosingMethod) match {
-          case Some(myCFG) =>
-            val blocks = myCFG.graph.vertexSet().asScala.filter({
-              case reg: RegularBlock => reg.getContents.asScala.zipWithIndex.exists({
-                case (n, idx) =>
-                  if (n.getTree == node) {
-                    if (idx != reg.getContents.size() - 1)
-                      Utils.assertFalse("Resource instruction [" + node.toString + "] must be at the end of a block!")
-                    true
-                  } else false
-              })
-              case _ => false
-            })
-            if (blocks.size != 1) Utils.assertFalse("Multiple/None blocks contain a same resource instruction!")
-            val curBlock = blocks.head.asInstanceOf[RegularBlock]
-            if (DEBUG_VISIT_ASSIGN) println("Visiting assignment in block: " + curBlock.getId)
+        val blocks = myCFG.graph.vertexSet().asScala.filter({
+          case reg: RegularBlock => reg.getContents.asScala.zipWithIndex.exists({
+            case (n, idx) =>
+              if (n.getTree == node) {
+                if (idx != reg.getContents.size() - 1)
+                  Utils.assertFalse("Resource instruction [" + node.toString + "] must be at the end of a block!")
+                true
+              } else false
+          })
+          case _ => false
+        })
+        if (blocks.size != 1) Utils.assertFalse("Multiple/None blocks contain a same resource instruction!")
+        val curBlock = blocks.head.asInstanceOf[RegularBlock]
+        if (DEBUG_VISIT_ASSIGN) println("Visiting assignment in block: " + curBlock.getId)
 
-            // GraphUtil.printGraph(myCFG.graph)
-            val invs = Invariant.inferLocalInv(curBlock, myCFG.graph, GraphUtil.getAllVars(myCFG.graph), z3Solver.mkTrue(), z3Solver)
-            if (invs.isEmpty) issueWarning(node, "No invariant is inferred!")
+        // GraphUtil.printGraph(myCFG.graph)
+        val invs = Invariant.inferLocalInv(curBlock, myCFG.graph, GraphUtil.getAllVars(myCFG.graph), z3Solver.mkTrue(), z3Solver)
+        if (invs.isEmpty) issueWarning(node, "No invariant is inferred!")
 
-            if (DEBUG_LOCAL_INV) {
-              Utils.printRedString("We inferred " + invs.size + " local invariants!")
-              invs.foreach(b => Utils.printCyanString(b.toString))
-            }
+        if (DEBUG_LOCAL_INV) {
+          Utils.printRedString("We inferred " + invs.size + " local invariants!")
+          invs.foreach(b => Utils.printCyanString(b.toString))
+        }
 
-            localInvs.get(enclosingMethod) match {
-              case Some(map) =>
-                localInvs = localInvs + (enclosingMethod -> (map + (node -> invs)))
-              case None =>
-                localInvs = localInvs + (enclosingMethod -> HashMap(node -> invs))
-            }
-          case None => // There is no CFG for the enclosing method
+        localInvs.get(enclosingMethod) match {
+          case Some(map) =>
+            localInvs = localInvs + (enclosingMethod -> (map + (node -> invs)))
+          case None =>
+            localInvs = localInvs + (enclosingMethod -> HashMap(node -> invs))
         }
       case None => // This is not an assignment updating resource variables
     }
 
     // Verify global invariants
-    verifyGlobInvs(node, enclosingMethod, z3Solver)
+    verifyGlobInvs(node, enclosingMethod, myCFG, z3Solver)
 
     super.visitAssignment(node, p)
   }
@@ -122,8 +120,10 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
     val z3Solver = solvers.getOrElse(enclosingMethod, new Z3Solver)
     solvers = solvers + (enclosingMethod -> z3Solver)
 
+    val myCFG: MyCFG = cfgs.getOrElse(enclosingMethod, null)
+
     // Verify global invariants
-    verifyGlobInvs(node, enclosingMethod, z3Solver)
+    verifyGlobInvs(node, enclosingMethod, myCFG, z3Solver)
 
     super.visitVariable(node, p)
   }
@@ -137,19 +137,25 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   }
 
   // We only verify inductive global invariants (which is very demanding)
-  private def verifyGlobInvs(stmt: Tree, method: MethodTree, z3Solver: Z3Solver): Unit = {
+  private def verifyGlobInvs(stmt: Tree, method: MethodTree, myCFG: MyCFG, z3Solver: Z3Solver): Unit = {
+    stmt match {
+      case tree @ (_: BlockTree | _: DoWhileLoopTree | _: EnhancedForLoopTree | _: ForLoopTree | _: IfTree | _: SwitchTree | _: SynchronizedTree | _: ThrowTree | _: TryTree | _: WhileLoopTree) => assert(false, "Should be an atomic statement!")
+      case _ =>
+    }
+    // Reference: https://stackoverflow.com/questions/52645036/scala-syntax-to-match-on-multiple-case-class-types-without-decomposing-the-case
+
     globalInvs.get(method) match {
       case Some(invs) =>
         val newGlobInvs = invs.foldLeft(new HashSet[BoolExpr])({
           (acc, inv) =>
             val wlp = PredTrans.wlpBasic(stmt, inv, z3Solver)
             val implication = z3Solver.mkImplies(inv, wlp)
-            val res = z3Solver.checkSAT(implication)
+            val res = Invariant.checkAssert(implication, myCFG.allVars, z3Solver)
             if (res) acc + inv
             else acc
         })
         if (DEBUG_GLOBAL_INV) {
-          val szUpdate = newGlobInvs.size - invs.size
+          val szUpdate = invs.size - newGlobInvs.size
           Utils.printRedString("We verified " + newGlobInvs.size + " global invariants! # of invalidated invariants is: " + szUpdate)
           newGlobInvs.foreach(b => Utils.printYellowString(b.toString))
         }

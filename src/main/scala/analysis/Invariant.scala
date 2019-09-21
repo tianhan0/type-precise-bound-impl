@@ -17,6 +17,8 @@ object Invariant {
   val DEBUG_LOCAL_INV = false
   val DEBUG_GEN_NEW_INV = false
 
+  var dp = new HashMap[Graph[Block, DefaultEdge], Set[BoolExpr]]
+
   // Return the predicate s.t. if it is valid right after the end of the given block, then it will be valid again next time reaching the end of the given block
   def inferLocalInv(loc: Block,
                     graph: Graph[Block, DefaultEdge],
@@ -164,25 +166,10 @@ object Invariant {
           }
 
           val implication = z3Solver.mkImplies(inv, acc) // TODO: Which direction?
-          val toCheck = {
-            // z3Solver.mkNot(
-              z3Solver.mkForall(
-                allVars.toArray.map({
-                  case (name, typ) =>
-                    if (typ.getKind == TypeKind.INT) z3Solver.mkIntVar(name)
-                    else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
-                    else {
-                      assert(false)
-                      z3Solver.mkFalse()
-                    }
-                }),
-                implication
-              )
-            // )
-          }
-          val res = z3Solver.checkSAT(toCheck)
+          val res = Invariant.checkAssert(implication, allVars, z3Solver)
           if (DEBUG_LOCAL_INV)
-            println(indentStr + "  Check the validity of inv " + inv.toString + " via\n" + toCheck + "\nZ3 result: " + res + "\n")
+            println(indentStr + "  " +
+              "Check the validity of inv " + inv.toString + "\nZ3 result: " + res + "\n")
           res
         })
     })
@@ -202,7 +189,7 @@ object Invariant {
   def genNewLocalInv(allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Set[BoolExpr] = {
     val coeff = HashSet[Int](-1, 1)
     val constants = {
-      val pos = HashSet[Int](0, 1)
+      val pos = HashSet[Int](0)
       pos.map(n => -n) ++ pos
     }
 
@@ -266,6 +253,28 @@ object Invariant {
         if (getTyp(typ) == TypeKind.INT) acc + z3Solver.mkGe(z3Solver.mkIntVar(name), z3Solver.mkIntVal(0))
         else acc
     })
+  }
+
+  // Return true if the assertion is valid
+  def checkAssert(assertion: BoolExpr, allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Boolean = {
+    val toCheck = {
+      z3Solver.mkNot(
+        z3Solver.mkForall(
+          allVars.toArray.map({
+            case (name, typ) =>
+              if (typ.getKind == TypeKind.INT) z3Solver.mkIntVar(name)
+              else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
+              else {
+                assert(false)
+                z3Solver.mkFalse()
+              }
+          }),
+          assertion
+        )
+      )
+    }
+    val res = z3Solver.checkSAT(toCheck)
+    !res
   }
 
   def rmDupInvs(invs: Set[BoolExpr], z3Solver: Z3Solver): Set[BoolExpr] = {

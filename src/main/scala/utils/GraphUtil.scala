@@ -128,6 +128,17 @@ object GraphUtil {
     newGraph
   }
 
+  def isSameGraph(g1: Graph[Block, DefaultEdge], g2: Graph[Block, DefaultEdge]): Boolean = {
+    val nodes1 = g1.vertexSet().asScala
+    val nodes2 = g2.vertexSet().asScala
+    if (nodes1.union(nodes2) == nodes1 && nodes2.union(nodes1) == nodes2) {
+      val edges1 = g1.edgeSet().asScala
+      val edges2 = g2.edgeSet().asScala
+      false
+    }
+    else false
+  }
+
   def hasCycle[V, E](graph: Graph[V, E]): Boolean = new CycleDetector(graph).detectCycles()
 
   def reverseTopological[V, E](graph: Graph[V, E]): List[V] = {
@@ -197,6 +208,7 @@ object GraphUtil {
 case class MyCFG(cfg: ControlFlowGraph) {
   val graph: DefaultDirectedGraph[Block, DefaultEdge] = GraphUtil.cfgToJgraphtGraph(cfg)
   // val simCycles: Set[List[Block]] = GraphUtil.getAllSimpleCycles(graph)
+  val allVars: Set[(String, TypeMirror)] = GraphUtil.getAllVars(graph)
 }
 
 // References
