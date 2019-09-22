@@ -9,7 +9,9 @@ PWD=$(pwd)
 lib="$PWD/lib"
 
 # ==========================Please configure the following paths============================
-scala_lib="$HOME/.sbt/preloaded/org.scala-lang/scala-library/2.12.7/jars/scala-library.jar"
+# scala_lib="$HOME/.sbt/preloaded/org.scala-lang/scala-library/2.12.7/jars/scala-library.jar"
+scala_lib="$HOME/.ivy2/cache/org.scala-lang/scala-library/jars/scala-library-2.12.8.jar"
+scala_reflect="$HOME/.ivy2/cache/org.scala-lang/scala-reflect/jars/scala-reflect-2.12.8.jar"
 jgrapht_core_lib="$HOME/.ivy2/cache/org.jgrapht/jgrapht-core/jars/jgrapht-core-1.3.1.jar"
 jheap_lib="$HOME/.ivy2/cache/org.jheaps/jheaps/jars/jheaps-0.10.jar"
 jgrapht_io_lib="$HOME/.ivy2/cache/org.jgrapht/jgrapht-io/jars/jgrapht-io-1.3.1.jar"

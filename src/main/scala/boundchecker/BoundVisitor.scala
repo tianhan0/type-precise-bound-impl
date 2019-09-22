@@ -32,7 +32,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   var bounds = new HashMap[MethodTree, Set[BoolExpr]]
   var vars = new HashMap[MethodTree, Vars]
 
-  sys.addShutdownHook(checkBound())
+  // sys.addShutdownHook(checkBound())
   // Reference: SourceChecker.typeProcessingStart
 
   override def visitMethod(node: MethodTree, p: Void): Void = {
@@ -75,6 +75,9 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
       // ex.printStackTrace()
     }
     super.visitMethod(node, p)
+
+    checkBound(node)
+    null
   }
 
   override def visitAssignment(node: AssignmentTree, p: Void): Void = {
@@ -208,13 +211,11 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
     }
   }
 
-  def checkBound(): Unit = {
-    var results = new HashMap[MethodTree, (Set[Expr], Set[Expr])]
-    // case class BndResult(methodTree: MethodTree, success: Set[Expr], failure: Set[Expr])
+  def checkBound(node: MethodTree): Unit = {
+    var results = new HashSet[BndResult]
+    if (this.bounds.nonEmpty) println("\n===============================================\nBound verification starts for method " + "...")
 
-    if (this.bounds.nonEmpty) println("\n===============================================\nBound verification starts...")
-
-    this.bounds.foreach({
+    this.bounds.filter(m => m._1 == node).foreach({
       case (methodTree, bounds1) =>
         val z3Solver = solvers.getOrElse(methodTree, new Z3Solver)
         val myCFG: MyCFG = cfgs.getOrElse(methodTree, null)
@@ -239,7 +240,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         localInvs.get(methodTree) match {
           case Some(map) =>
             // Each subset is a set of local invariants
-            val locals: Set[Set[BoolExpr]] = {
+            val locals: Iterator[Set[BoolExpr]] = {
               val locals = map.values.foldLeft(new HashSet[BoolExpr])({
                 (acc, locals) =>
                   val localsCompatibleWithGlobals = locals.filter({
@@ -256,10 +257,14 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
                       res
                   })
                   acc ++ localsCompatibleWithGlobals
-              })
-              Utils.power(locals)
+              }).subsets()
+              locals
+              // Utils.power(locals)
               // Error "java.lang.NoClassDefFoundError: scala/collection/SetLike$$anon$1" is caused by invoking
               // XXX.subset(). The error is fixed by implementing power set generation
+              // References:
+              // https://github.com/ztellman/aleph/issues/320#issuecomment-304113405
+              // https://stackoverflow.com/questions/11351633/java-scala-shutdown-hook-noclassdeffounderror
             }
 
             val exists = {
@@ -304,23 +309,12 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
                 })
             })
 
-            if (bounds1.nonEmpty) results = results + (methodTree -> (success, failure))
+            if (bounds1.nonEmpty) results = results + BndResult(methodTree, success, failure)
           case None =>
         }
     })
 
-    results.foreach({
-      case (methodTree, (success, failure)) =>
-        val methodName = methodTree.getName.toString
-        println("\nResults for method " + methodName)
-        if (success.nonEmpty) {
-          success.foreach(bound => Utils.printGreenString("Bound " + bound.toString + " for method " + methodName + " is verified"))
-        }
-        else if (success.isEmpty) {
-          assert(failure.nonEmpty)
-          failure.foreach(bound => Utils.printRedString("Bound " + bound.toString + " for method " + methodName + " is not verified"))
-        }
-    })
+    results.foreach(bndRes => bndRes.printResults())
 
     println()
     Z3Solver.printTime()
@@ -330,4 +324,18 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
 
 case class Vars(locals: Set[Expr], args: Set[Expr], resVars: Set[Expr]) {
   val allVars: Set[Expr] = locals ++ args ++ resVars
+}
+
+case class BndResult(methodTree: MethodTree, success: Set[Expr], failure: Set[Expr]) {
+  def printResults(): Unit = {
+    val methodName = methodTree.getName.toString
+    println("\nResults for method " + methodName)
+    if (success.nonEmpty) {
+      success.foreach(bound => Utils.printGreenString("Bound " + bound.toString + " for method " + methodName + " is verified"))
+    }
+    else if (success.isEmpty) {
+      assert(failure.nonEmpty)
+      failure.foreach(bound => Utils.printRedString("Bound " + bound.toString + " for method " + methodName + " is not verified"))
+    }
+  }
 }
