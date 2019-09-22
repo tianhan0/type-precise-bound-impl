@@ -20,9 +20,9 @@ import scala.collection.immutable.{HashMap, HashSet}
   */
 class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotatedTypeFactory](checker) {
   val DEBUG_VISIT_ASSIGN = false
-  val DEBUG_LOCAL_INV = true
+  val DEBUG_LOCAL_INV = false
   val DEBUG_GLOBAL_INV = false
-  val DEBUG_VERIFICATION = true
+  val DEBUG_VERIFICATION = false
 
   var cfgs = new HashMap[MethodTree, MyCFG]()
   var solvers = new HashMap[MethodTree, Z3Solver]
@@ -228,14 +228,9 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         val myCFG: MyCFG = cfgs.getOrElse(methodTree, null)
         assert(myCFG != null)
 
-        val (localVars: Set[Expr], globalVars: Set[Expr]) = {
-          vars.get(methodTree) match {
-            case Some(v) => (v.locals, v.args ++ v.resVars)
-            case None =>
-              assert(false, "Method " + methodTree.getName.toString + " doesn't have any variables!")
-              (HashSet[Expr](), HashSet[Expr]())
-          }
-        }
+        val vars = this.vars.getOrElse(methodTree, null)
+        assert(vars != null || vars.allVars.isEmpty, "Method " + methodTree.getName.toString + " doesn't have any variables!")
+        val (localVars, globalVars) = (vars.locals, vars.args ++ vars.resVars)
 
         val globals = {
           val g = globalInvs.get(methodTree) match {
@@ -249,46 +244,58 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
           z3Solver.mkAnd(g, a)
         }
 
-          localInvs.get(methodTree) match {
-            case Some(map) =>
-              val cartesianProduct = Utils.crossJoin(map.values.filter(set => set.nonEmpty))
+        localInvs.get(methodTree) match {
+          case Some(map) =>
+            val locals = map.values.flatMap({
+              locals =>
+                val localsCompatibleWithGlobals = locals.filter({
+                  local =>
+                    val exist = {
+                      val body = z3Solver.mkAnd(local, globals)
+                      // Check if there exists an assignment to all variables such that the conjunction of the current
+                      // local invariant and global invariants are SAT, because the verified local invariants
+                      // may contradict global invariants (i.e. there exists no state that both satisfy
+                      // local and global invariants), in which case we will have `false=>anything`.
+                      z3Solver.mkExists(vars.allVars.toArray, body) // TODO: all variables or global variables or ???
+                    }
+                    val res = z3Solver.checkSAT(exist)
+                    res
+                })
+                localsCompatibleWithGlobals
+            })
 
-              val (success: Set[Expr], failure: Set[Expr]) = bounds1.foldLeft((HashSet[Expr](), HashSet[Expr]()))({
-                (acc3, bound) =>
-                  cartesianProduct.foldLeft(acc3)({
-                    (acc4, locals) =>
-                      // We check a new assertion only if all previous checks failed
-                      // if (acc4._1.isEmpty) {
-                        val toCheck = {
-                          val l = Invariant.getConjunction(locals, z3Solver)
-                          val exists = {
-                            val body = z3Solver.mkAnd(l, globals)
-                            if (localVars.isEmpty) body
-                            else z3Solver.mkExists(localVars.toArray, body)
-                          }
+            val exists = {
+              val l = Invariant.getConjunction(locals, z3Solver)
+              val body = z3Solver.mkAnd(l, globals)
+              if (localVars.isEmpty) body
+              else z3Solver.mkExists(localVars.toArray, body)
+            }
 
-                          z3Solver.mkForall(
-                            globalVars.toArray,
-                            // We should not use implication here, because the verified local invariants may
-                            // contradict global invariants (i.e. there exists no state that both satisfy local
-                            // and global invariants), in which case we will have `false=>anything`.
-                            // In contrast, we want to the invariants together with the bounds to be both true
-                            z3Solver.mkAnd(exists, bound)
-                          )
-                        }
+            val (success: Set[Expr], failure: Set[Expr]) = bounds1.foldLeft((HashSet[Expr](), HashSet[Expr]()))({
+              (acc3, bound) =>
+                // We check a new assertion only if all previous checks failed
+                // if (acc4._1.isEmpty) {
+                val toCheck = {
+                  z3Solver.mkForall(
+                    globalVars.toArray,
+                    // We should use `implication` here (instead of `and`), because we don't expect all inputs
+                    // to satisfy both invariants and bounds. We only care if those program states that
+                    // satisfy invariants also satisfy bounds
+                    z3Solver.mkImplies(exists, bound)
+                  )
+                }
 
-                        val res = z3Solver.checkSAT(toCheck)
-                        if (DEBUG_VERIFICATION) println("\n" + res + "\n" + toCheck.toString)
-                        if (res) (acc4._1 + bound, acc4._2)
-                        else (acc4._1, acc4._2 + bound)
-                      // }
-                      // else acc4
-                  })
-              })
+                val res = z3Solver.checkSAT(toCheck)
+                if (DEBUG_VERIFICATION) println("\n" + res + "\n" + toCheck.toString)
+                if (res) (acc3._1 + bound, acc3._2)
+                else (acc3._1, acc3._2 + bound)
+              // }
+              // else acc4
+            })
 
-              if (bounds1.nonEmpty) results = results + (methodTree -> (success, failure))
-            case None =>
-          }
+            if (bounds1.nonEmpty) results = results + (methodTree -> (success, failure))
+          case None =>
+        }
     })
 
     results.foreach({
