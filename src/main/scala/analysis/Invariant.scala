@@ -17,8 +17,11 @@ import scala.collection.immutable.{HashMap, HashSet}
   * @author Tianhan Lu
   */
 object Invariant {
-  val DEBUG_LOCAL_INV = false
+  val DEBUG_SMTLIB = false
+  val DEBUG_LOOP_TRAVERSE = false
+  val DEBUG_LOCAL_INV = true
   val DEBUG_GEN_NEW_INV = false
+  val INVS_TO_DEBUG = HashSet("(< (+ i (* (- 1) n)) 0)", "(< (+ (* (- 1) n) i) 0)")
 
   var TOTAL_TIME: Double = 0
 
@@ -55,12 +58,13 @@ object Invariant {
         true
     }).filter({
       inv =>
-        if (DEBUG_LOCAL_INV) println(indentStr + "Verify the validity of invariant " + inv)
+        // if (DEBUG_LOCAL_INV) println(indentStr + "Verify the validity of invariant " + inv)
+
         // If for all simple cycles, if the guessed local invariant is valid right after the end of the given block,
         // then it will be valid again next time reaching the end of the given block,
         // then the guessed local invariant is valid
         simCycles.forall(simCycle => {
-          if (DEBUG_LOCAL_INV) println("\n" + indentStr + "Simple cycle: " + simCycle.map(b => b.getId))
+          if (DEBUG_LOCAL_INV && DEBUG_LOOP_TRAVERSE) println("\n" + indentStr + "Simple cycle: " + simCycle.map(b => b.getId))
           var acc = inv
           val idx = simCycle.indexOf(loc)
           if (idx != -1) {
@@ -95,7 +99,7 @@ object Invariant {
             var j = idx
             do {
               val curBlock = simCycle(j)
-              if (DEBUG_LOCAL_INV) println(indentStr + "->curBlock " + curBlock.getId)
+              if (DEBUG_LOCAL_INV && DEBUG_LOOP_TRAVERSE) println(indentStr + "->curBlock " + curBlock.getId)
 
               // Find out the SCC containing the current block
               val sccs = GraphUtil.getSCCs(newGraph).filter(graph => graph.vertexSet().asScala.contains(curBlock))
@@ -149,14 +153,16 @@ object Invariant {
                     if (loopPreds.size <= 1) loopPreds.head
                     else z3Solver.mkOr(loopPreds.toSeq: _*)
                   }
-                  if (DEBUG_LOCAL_INV) {
+                  if (DEBUG_LOCAL_INV && DEBUG_SMTLIB) {
                     loopPreds.foreach(loopPred => println(indentStr + "  Loop wlp: " + loopPred))
                   }
                 }
 
-                /*if (inv.toString == "(< (+ i (* (- 1) n)) 0)" || inv.toString == "(< (+ (* (- 1) n) i) 0)") {
-                  loopInvs.foreach(inv => println(inv))
-                }*/
+                if (DEBUG_LOCAL_INV && INVS_TO_DEBUG.contains(inv.toString)) {
+                  println(indentStr + "  " + "---Inner loop's invariants (generated for the interesting invariants)")
+                  loopInvs.foreach(inv => println(indentStr + "  " + inv))
+                  println(indentStr + "  " + "---Inner loop's invariants\n")
+                }
 
                 // Make the inner loop acyclic by removing the edge starting from the current block
                 val toRemove = {
@@ -178,11 +184,18 @@ object Invariant {
                 case condBlk: ConditionalBlock =>
                   val nxtBlk = if (j == simCycle.size - 1) simCycle.head else simCycle(j + 1)
                   val branching = PredTrans.getBranchCond(condBlk, newGraph, z3Solver)
-                  val cond = if (condBlk.getThenSuccessor == nxtBlk) branching else z3Solver.mkNot(branching)
+                  val cond = {
+                    if (condBlk.getThenSuccessor == nxtBlk) branching
+                    else if (condBlk.getElseSuccessor == nxtBlk) z3Solver.mkNot(branching)
+                    else {
+                      assert(false)
+                      z3Solver.mkFalse()
+                    }
+                  }
                   acc = z3Solver.mkImplies(cond, acc)
                 case _ => acc = PredTrans.wlpBlock(curBlock, acc, z3Solver)
               }
-              if (DEBUG_LOCAL_INV) {
+              if (DEBUG_LOCAL_INV && DEBUG_SMTLIB) {
                 println(indentStr + "<-curBlock " + curBlock.getId + " wlp: " + acc + "\n")
               }
 
@@ -196,7 +209,7 @@ object Invariant {
 
           val implication = z3Solver.mkImplies(inv, acc) // TODO: Which direction?
           val res = Invariant.checkForall(implication, allVars, z3Solver)
-          if (DEBUG_LOCAL_INV) {
+          if (DEBUG_LOCAL_INV && DEBUG_SMTLIB) {
             println(indentStr + "  " + "Check the validity of inv " + inv.toString + " via " + res._2)
             println(indentStr + "  " + "Z3 result: " + res._1 + "\n")
           }
@@ -205,7 +218,7 @@ object Invariant {
     })
     if (DEBUG_LOCAL_INV) {
       println(indentStr + "---Infer invariant right after block " + loc.getId + " finishes.")
-      println(indentStr + "---Valid invariants are: " + validInvs.foldLeft("\n")((acc, b) => acc + b + "\n"))
+      println(indentStr + "---Valid invariants are: " + validInvs.foldLeft("\n")((acc, b) => acc + indentStr + "  " + b + "\n"))
     }
 
     dp = (InvGuess(loc, graph), validInvs) :: dp

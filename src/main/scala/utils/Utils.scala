@@ -2,6 +2,9 @@ package utils
 
 import java.io.File
 
+import com.sun.source.tree.{CompilationUnitTree, Tree}
+import com.sun.source.util.SourcePositions
+
 import scala.util.matching.Regex
 
 /**
@@ -74,5 +77,9 @@ object Utils {
       }
     }
     res.foldLeft(""){ (acc, ch) => acc+ch }
+  }
+
+  def getLineNumber(node: Tree, positions: SourcePositions, root: CompilationUnitTree): Long = {
+    root.getLineMap.getLineNumber(positions.getStartPosition(root, node))
   }
 }

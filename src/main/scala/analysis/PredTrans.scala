@@ -521,3 +521,5 @@ object PredTrans {
     }
   }
 }
+
+// Reference: Hoare Logic - brief summary by C. Marche

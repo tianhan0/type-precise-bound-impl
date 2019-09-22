@@ -20,7 +20,7 @@ import scala.collection.immutable.{HashMap, HashSet}
   */
 class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotatedTypeFactory](checker) {
   val DEBUG_VISIT_ASSIGN = false
-  val DEBUG_LOCAL_INV = false
+  val DEBUG_LOCAL_INV = true
   val DEBUG_GLOBAL_INV = false
   val DEBUG_VERIFICATION = false
 
@@ -96,13 +96,13 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
             case (n, idx) =>
               if (n.getTree == node) {
                 if (idx != reg.getContents.size() - 1)
-                  Utils.assertFalse("Resource instruction [" + node.toString + "] must be at the end of a block!")
+                  assert(false, "Resource instruction [" + node.toString + "] must be at the end of a block!")
                 true
               } else false
           })
           case _ => false
         })
-        if (blocks.size != 1) Utils.assertFalse("Multiple/None blocks contain a same resource instruction!")
+        if (blocks.size != 1) assert(false, "Multiple/None blocks contain a same resource instruction!")
         val curBlock = blocks.head.asInstanceOf[RegularBlock]
         if (DEBUG_VISIT_ASSIGN) println("Visiting assignment in block: " + curBlock.getId)
 
@@ -111,7 +111,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         if (invs.isEmpty) issueWarning(node, "No invariant is inferred!")
 
         if (DEBUG_LOCAL_INV) {
-          Utils.printRedString("\nWe inferred " + invs.size + " local invariants!")
+          Utils.printRedString("\nWe inferred " + invs.size + " local invariants at line " + Utils.getLineNumber(node, positions, root))
           invs.foreach(b => Utils.printCyanString(b.toString))
           println()
         }
