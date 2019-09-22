@@ -107,7 +107,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         if (DEBUG_VISIT_ASSIGN) println("Visiting assignment in block: " + curBlock.getId)
 
         // GraphUtil.printGraph(myCFG.graph)
-        val invs = Invariant.inferLocalInv(curBlock, myCFG.graph, GraphUtil.getProgAllVars(myCFG.graph), z3Solver.mkTrue(), z3Solver)
+        val invs = Invariant.inferLocalInv(curBlock, myCFG.graph, vars.allVars, z3Solver.mkTrue(), z3Solver)
         if (invs.isEmpty) issueWarning(node, "No invariant is inferred!")
 
         if (DEBUG_LOCAL_INV) {
@@ -126,7 +126,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
     }
 
     // Verify global invariants
-    verifyGlobInvs(node, enclosingMethod, myCFG, z3Solver)
+    verifyGlobInvs(node, enclosingMethod, myCFG, z3Solver, vars)
 
     super.visitAssignment(node, p)
   }
@@ -135,7 +135,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
     val (myCFG, z3Solver, enclosingMethod, vars) = prep(node)
 
     // Verify global invariants
-    verifyGlobInvs(node, enclosingMethod, myCFG, z3Solver)
+    verifyGlobInvs(node, enclosingMethod, myCFG, z3Solver, vars)
 
     super.visitVariable(node, p)
   }
@@ -189,7 +189,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   }
 
   // We only verify inductive global invariants (which is very demanding)
-  private def verifyGlobInvs(stmt: Tree, method: MethodTree, myCFG: MyCFG, z3Solver: Z3Solver): Unit = {
+  private def verifyGlobInvs(stmt: Tree, method: MethodTree, myCFG: MyCFG, z3Solver: Z3Solver, vars: Vars): Unit = {
     stmt match {
       case tree@(_: BlockTree | _: DoWhileLoopTree | _: EnhancedForLoopTree | _: ForLoopTree | _: IfTree | _: SwitchTree | _: SynchronizedTree | _: ThrowTree | _: TryTree | _: WhileLoopTree) => assert(false, "Should be an atomic statement!")
       case _ =>
@@ -202,7 +202,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
           (acc, inv) =>
             val wlp = PredTrans.wlpBasic(stmt, inv, z3Solver)
             val implication = z3Solver.mkImplies(inv, wlp)
-            val res = Invariant.checkForall(implication, myCFG.allVars, z3Solver)
+            val res = Invariant.checkForall(implication, vars.allVars, z3Solver)
             if (res._1) acc + inv
             else acc
         })
@@ -284,12 +284,14 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
 
     results.foreach({
       case (methodTree, (success, failure)) =>
-      val methodName = methodTree.getName.toString
-      println("\nResults for method " + methodName)
-      success.foreach(bound => Utils.printGreenString("Bound " + bound.toString + " for method " + methodName + " is verified"))
-      failure.foreach(bound => Utils.printRedString("Bound " + bound.toString + " for method " + methodName + " is not verified!"))
+        val methodName = methodTree.getName.toString
+        println("\nResults for method " + methodName)
+        success.foreach(bound => Utils.printGreenString("Bound " + bound.toString + " for method " + methodName + " is verified"))
+        failure.foreach(bound => Utils.printRedString("Bound " + bound.toString + " for method " + methodName + " is not verified"))
     })
   }
 }
 
-case class Vars(locals: Set[Expr], args: Set[Expr], resVars: Set[Expr])
+case class Vars(locals: Set[Expr], args: Set[Expr], resVars: Set[Expr]) {
+  val allVars: Set[Expr] = locals ++ args ++ resVars
+}
