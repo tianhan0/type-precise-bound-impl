@@ -22,7 +22,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   val DEBUG_VISIT_ASSIGN = false
   val DEBUG_LOCAL_INV = true
   val DEBUG_GLOBAL_INV = false
-  val DEBUG_VERIFICATION = false
+  val DEBUG_VERIFICATION = true
 
   var cfgs = new HashMap[MethodTree, MyCFG]()
   var solvers = new HashMap[MethodTree, Z3Solver]
@@ -73,7 +73,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         println("We attempt to automatically verify " + guesses.size + " bound(s) for method " + node.getName)
       }
       else {
-        println("We didn't attempt to verify bounds for method " + node.getName + ", because it does not contain resource variables or method arguments")
+        println("We did not attempt to verify bounds for method " + node.getName + ", because it does not contain resource variables or method arguments")
       }
     }
     catch {
@@ -220,7 +220,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
     var results = new HashMap[MethodTree, (Set[Expr], Set[Expr])]
     // case class BndResult(methodTree: MethodTree, success: Set[Expr], failure: Set[Expr])
 
-    if (this.bounds.nonEmpty) println("\n\n\nBound verification starts...")
+    if (this.bounds.nonEmpty) println("\n===============================================\nBound verification starts...")
 
     this.bounds.foreach({
       case (methodTree, bounds1) =>
@@ -249,45 +249,59 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
           z3Solver.mkAnd(g, a)
         }
 
-        val locals = {
           localInvs.get(methodTree) match {
             case Some(map) =>
-              map.foldLeft(z3Solver.mkTrue())({
-                case (acc2, (_, invs)) =>
-                  val l = Invariant.getConjunction(invs, z3Solver)
-                  val exists = {
-                    val body = z3Solver.mkAnd(l, globals)
-                    if (localVars.isEmpty) body
-                    else z3Solver.mkExists(localVars.toArray, body)
-                  }
-                  z3Solver.mkAnd(acc2, exists)
+              val cartesianProduct = Utils.crossJoin(map.values.filter(set => set.nonEmpty))
+
+              val (success: Set[Expr], failure: Set[Expr]) = bounds1.foldLeft((HashSet[Expr](), HashSet[Expr]()))({
+                (acc3, bound) =>
+                  cartesianProduct.foldLeft(acc3)({
+                    (acc4, locals) =>
+                      // We check a new assertion only if all previous checks failed
+                      // if (acc4._1.isEmpty) {
+                        val toCheck = {
+                          val l = Invariant.getConjunction(locals, z3Solver)
+                          val exists = {
+                            val body = z3Solver.mkAnd(l, globals)
+                            if (localVars.isEmpty) body
+                            else z3Solver.mkExists(localVars.toArray, body)
+                          }
+
+                          z3Solver.mkForall(
+                            globalVars.toArray,
+                            // We should not use implication here, because the verified local invariants may
+                            // contradict global invariants (i.e. there exists no state that both satisfy local
+                            // and global invariants), in which case we will have `false=>anything`.
+                            // In contrast, we want to the invariants together with the bounds to be both true
+                            z3Solver.mkAnd(exists, bound)
+                          )
+                        }
+
+                        val res = z3Solver.checkSAT(toCheck)
+                        if (DEBUG_VERIFICATION) println("\n" + res + "\n" + toCheck.toString)
+                        if (res) (acc4._1 + bound, acc4._2)
+                        else (acc4._1, acc4._2 + bound)
+                      // }
+                      // else acc4
+                  })
               })
-            case None => z3Solver.mkTrue()
+
+              if (bounds1.nonEmpty) results = results + (methodTree -> (success, failure))
+            case None =>
           }
-        }
-
-        val (success: Set[Expr], failure: Set[Expr]) = bounds1.foldLeft((HashSet[Expr](), HashSet[Expr]()))(
-          (acc3, bound) => {
-            val toCheck = z3Solver.mkForall(
-              globalVars.toArray,
-              z3Solver.mkImplies(locals, bound)
-            )
-            if (DEBUG_VERIFICATION) println(toCheck.toString)
-
-            val res = z3Solver.checkSAT(toCheck)
-            if (res) (acc3._1 + bound, acc3._2)
-            else (acc3._1, acc3._2 + bound)
-          })
-
-        results = results + (methodTree -> (success, failure))
     })
 
     results.foreach({
       case (methodTree, (success, failure)) =>
         val methodName = methodTree.getName.toString
         println("\nResults for method " + methodName)
-        success.foreach(bound => Utils.printGreenString("Bound " + bound.toString + " for method " + methodName + " is verified"))
-        failure.foreach(bound => Utils.printRedString("Bound " + bound.toString + " for method " + methodName + " is not verified"))
+        if (success.nonEmpty) {
+          success.foreach(bound => Utils.printGreenString("Bound " + bound.toString + " for method " + methodName + " is verified"))
+        }
+        else if (success.isEmpty) {
+          assert(failure.nonEmpty)
+          failure.foreach(bound => Utils.printRedString("Bound " + bound.toString + " for method " + methodName + " is not verified"))
+        }
     })
   }
 }

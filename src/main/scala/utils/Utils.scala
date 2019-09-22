@@ -82,4 +82,18 @@ object Utils {
   def getLineNumber(node: Tree, positions: SourcePositions, root: CompilationUnitTree): Long = {
     root.getLineMap.getLineNumber(positions.getStartPosition(root, node))
   }
+
+  def crossJoin[T](list: Traversable[Traversable[T]]): Traversable[Traversable[T]] =
+  // References:
+  // https://stackoverflow.com/questions/14740199/cross-product-in-scala
+  // https://stackoverflow.com/questions/54330356/scala-create-all-possible-permutations-of-a-sentence-based-synonyms-of-each-wor
+    list match {
+      case Nil => Nil
+      case xs :: Nil => xs map (Traversable(_))
+      case x :: xs => for {
+        i <- x
+        j <- crossJoin(xs)
+      } yield Traversable(i) ++ j
+      // case x@_ => println(x); Nil
+    }
 }
