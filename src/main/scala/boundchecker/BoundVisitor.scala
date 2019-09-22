@@ -20,9 +20,9 @@ import scala.collection.immutable.{HashMap, HashSet}
   */
 class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotatedTypeFactory](checker) {
   val DEBUG_VISIT_ASSIGN = false
-  val DEBUG_LOCAL_INV = true
+  val DEBUG_LOCAL_INV = false
   val DEBUG_GLOBAL_INV = false
-  val DEBUG_VERIFICATION = true
+  val DEBUG_VERIFICATION = false
 
   var cfgs = new HashMap[MethodTree, MyCFG]()
   var solvers = new HashMap[MethodTree, Z3Solver]
@@ -35,6 +35,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   Runtime.getRuntime.addShutdownHook(new Thread() {
     override def run(): Unit = {
       checkBound()
+      println()
       Z3Solver.printTime()
       Invariant.printTime()
     }
@@ -67,10 +68,12 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
       vars = vars + (node -> myVars)
 
       if (myVars.args.nonEmpty && myVars.resVars.nonEmpty) {
-        bounds = bounds + (node -> Invariant.guessBounds(myVars, z3Solver))
+        val guesses = Invariant.guessBounds(myVars, z3Solver)
+        bounds = bounds + (node -> guesses)
+        println("We attempt to automatically verify " + guesses.size + " bound(s) for method " + node.getName)
       }
       else {
-        println("We don't verify bounds for method " + node.getName + ", because it does not contain resource variables or method arguments")
+        println("We didn't attempt to verify bounds for method " + node.getName + ", because it does not contain resource variables or method arguments")
       }
     }
     catch {
@@ -83,7 +86,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   }
 
   override def visitAssignment(node: AssignmentTree, p: Void): Void = {
-    val (myCFG, z3Solver, enclosingMethod) = prep(node)
+    val (myCFG, z3Solver, enclosingMethod, vars) = prep(node)
 
     // Guess local invariants
     Utils.getResVarName(node.getVariable.toString) match {
@@ -129,7 +132,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   }
 
   override def visitVariable(node: VariableTree, p: Void): Void = {
-    val (myCFG, z3Solver, enclosingMethod) = prep(node)
+    val (myCFG, z3Solver, enclosingMethod, vars) = prep(node)
 
     // Verify global invariants
     verifyGlobInvs(node, enclosingMethod, myCFG, z3Solver)
@@ -138,7 +141,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   }
 
   override def visitAssert(node: AssertTree, p: Void): Void = {
-    val (myCFG, z3solver, enclosingMethod) = prep(node)
+    val (myCFG, z3solver, enclosingMethod, vars) = prep(node)
 
     if (node.getDetail != null) {
       assert(node.getCondition != null)
@@ -160,7 +163,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
     super.visitAssert(node, p)
   }
 
-  private def prep(node: Tree): (MyCFG, Z3Solver, MethodTree) = {
+  private def prep(node: Tree): (MyCFG, Z3Solver, MethodTree, Vars) = {
     val treePath = atypeFactory.getPath(node)
     val enclosingMethod: MethodTree = TreeUtils.enclosingMethod(treePath)
     assert(enclosingMethod != null)
@@ -171,7 +174,10 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
     val myCFG: MyCFG = cfgs.getOrElse(enclosingMethod, null)
     assert(myCFG != null)
 
-    (myCFG, z3Solver, enclosingMethod)
+    val vars = this.vars.getOrElse(enclosingMethod, null)
+    assert(vars != null)
+
+    (myCFG, z3Solver, enclosingMethod, vars)
   }
 
   private def issueWarning(node: Object, msg: String): Unit = {
@@ -211,9 +217,12 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   }
 
   def checkBound(): Unit = {
-    if (bounds.nonEmpty) println("\n\n\nBound verification starts:")
+    var results = new HashMap[MethodTree, (Set[Expr], Set[Expr])]
+    // case class BndResult(methodTree: MethodTree, success: Set[Expr], failure: Set[Expr])
 
-    bounds.foreach({
+    if (this.bounds.nonEmpty) println("\n\n\nBound verification starts...")
+
+    this.bounds.foreach({
       case (methodTree, bounds1) =>
         val z3Solver = solvers.getOrElse(methodTree, new Z3Solver)
         val myCFG: MyCFG = cfgs.getOrElse(methodTree, null)
@@ -244,30 +253,41 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
           localInvs.get(methodTree) match {
             case Some(map) =>
               map.foldLeft(z3Solver.mkTrue())({
-                case (acc, (tree, invs)) =>
+                case (acc2, (_, invs)) =>
                   val l = Invariant.getConjunction(invs, z3Solver)
                   val exists = {
                     val body = z3Solver.mkAnd(l, globals)
                     if (localVars.isEmpty) body
                     else z3Solver.mkExists(localVars.toArray, body)
                   }
-                  z3Solver.mkAnd(acc, exists)
+                  z3Solver.mkAnd(acc2, exists)
               })
             case None => z3Solver.mkTrue()
           }
         }
 
-        bounds1.foreach(bound => {
-          val toCheck = z3Solver.mkForall(
-            globalVars.toArray,
-            z3Solver.mkImplies(locals, bound)
-          )
-          if (DEBUG_VERIFICATION) println(toCheck.toString)
+        val (success: Set[Expr], failure: Set[Expr]) = bounds1.foldLeft((HashSet[Expr](), HashSet[Expr]()))(
+          (acc3, bound) => {
+            val toCheck = z3Solver.mkForall(
+              globalVars.toArray,
+              z3Solver.mkImplies(locals, bound)
+            )
+            if (DEBUG_VERIFICATION) println(toCheck.toString)
 
-          val res = z3Solver.checkSAT(toCheck)
-          if (res) Utils.printGreenString("Bound " + bound.toString + " for method " + methodTree.getName + " is verified!\n")
-          else Utils.printRedString("Bound " + bound.toString + " for method " + methodTree.getName + " is not verified!\n")
-        })
+            val res = z3Solver.checkSAT(toCheck)
+            if (res) (acc3._1 + bound, acc3._2)
+            else (acc3._1, acc3._2 + bound)
+          })
+
+        results = results + (methodTree -> (success, failure))
+    })
+
+    results.foreach({
+      case (methodTree, (success, failure)) =>
+      val methodName = methodTree.getName.toString
+      println("\nResults for method " + methodName)
+      success.foreach(bound => Utils.printGreenString("Bound " + bound.toString + " for method " + methodName + " is verified"))
+      failure.foreach(bound => Utils.printRedString("Bound " + bound.toString + " for method " + methodName + " is not verified!"))
     })
   }
 }

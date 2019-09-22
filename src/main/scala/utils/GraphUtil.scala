@@ -191,7 +191,7 @@ object GraphUtil {
         getExprVars(initializer) + ((variableTree.getName.toString, TreeUtils.typeOf(variableTree.getType)))
       case _ => new HashSet[(String, TypeMirror)]
     }
-    res.filter({ case (name, typ) => name != Utils.BOUND_STR })
+    res //.filter({ case (name, typ) => name != Utils.BOUND_STR })
   }
 
   def getProgAllVars(graph: Graph[Block, DefaultEdge]): Set[(String, TypeMirror)] = {
