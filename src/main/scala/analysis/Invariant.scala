@@ -1,11 +1,14 @@
 package analysis
 
-import com.microsoft.z3.{BoolExpr, Expr}
+import boundchecker.Vars
+import com.microsoft.z3.{BoolExpr, Expr, IntExpr}
+import com.sun.source.tree.MethodTree
 import javax.lang.model.`type`.{TypeKind, TypeMirror}
 import org.checkerframework.dataflow.cfg.block.{Block, ConditionalBlock, SingleSuccessorBlock}
+import org.checkerframework.javacutil.TreeUtils
 import org.jgrapht.Graph
 import org.jgrapht.graph.DefaultEdge
-import utils.GraphUtil
+import utils.{GraphUtil, Utils}
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.{HashMap, HashSet}
@@ -17,7 +20,9 @@ object Invariant {
   val DEBUG_LOCAL_INV = false
   val DEBUG_GEN_NEW_INV = false
 
-  var dp = List[(Result, Set[BoolExpr])]()
+  var TOTAL_TIME: Double = 0
+
+  var dp = List[(InvGuess, Set[BoolExpr])]()
 
   // Return the predicate s.t. if it is valid right after the end of the given block, then it will be valid again next time reaching the end of the given block
   def inferLocalInv(loc: Block,
@@ -26,10 +31,11 @@ object Invariant {
                     pred: BoolExpr, // The predicate abstracting the context under which invariants need to be inferred
                     z3Solver: Z3Solver,
                     indent: Int = 0): Set[BoolExpr] = {
-    val res = Result(loc, graph)
+    val start = System.nanoTime()
+    val invGuess = InvGuess(loc, graph)
     dp.foreach({
-      case (resp, inv) =>
-        if (resp.equals(res)) {
+      case (invGuessp, inv) =>
+        if (invGuessp.equals(invGuess)) {
           // println("!!!!!!!!!!!!!!!")
           return inv
         }
@@ -39,7 +45,7 @@ object Invariant {
     if (DEBUG_LOCAL_INV) println("\n\n\n" + indentStr + "---Infer invariant right after block " + loc.getId + " started:")
     val simCycles = GraphUtil.getAllSimpleCycles(graph)
 
-    val invs = genNewLocalInv(allVars, z3Solver)
+    val invs = guessLocalInv(allVars, z3Solver)
     if (DEBUG_GEN_NEW_INV) println("# of vars: " + allVars.size + "\n# of invs: " + invs.size)
     val validInvs = invs.filter({
       inv =>
@@ -133,7 +139,7 @@ object Invariant {
                 if (loopInvs.isEmpty) {
                   // Stop exploration because we cannot find loop invariants and hence cannot compute wlp!
                   val res = new HashSet[BoolExpr]()
-                  dp = (Result(loc, graph), res) :: dp
+                  dp = (InvGuess(loc, graph), res) :: dp
                   return res
                 }
                 else {
@@ -189,7 +195,7 @@ object Invariant {
           }
 
           val implication = z3Solver.mkImplies(inv, acc) // TODO: Which direction?
-          val res = Invariant.checkAssert(implication, allVars, z3Solver)
+          val res = Invariant.checkForall(implication, allVars, z3Solver)
           if (DEBUG_LOCAL_INV) {
             println(indentStr + "  " + "Check the validity of inv " + inv.toString + " via " + res._2)
             println(indentStr + "  " + "Z3 result: " + res._1 + "\n")
@@ -202,7 +208,10 @@ object Invariant {
       println(indentStr + "---Valid invariants are: " + validInvs.foldLeft("\n")((acc, b) => acc + b + "\n"))
     }
 
-    dp = (Result(loc, graph), validInvs) :: dp
+    dp = (InvGuess(loc, graph), validInvs) :: dp
+    val end = System.nanoTime()
+    TOTAL_TIME += (end - start).toDouble / Utils.NANO
+
     validInvs
   }
 
@@ -215,7 +224,7 @@ object Invariant {
     }
   }
 
-  def genNewLocalInv(allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Set[BoolExpr] = {
+  def guessLocalInv(allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Set[BoolExpr] = {
     val coeff = HashSet[Int](-1, 1)
     val constants = {
       val pos = HashSet[Int](0)
@@ -272,7 +281,7 @@ object Invariant {
     }*/
   }
 
-  def genNewGlobInv(allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Set[BoolExpr] = {
+  def guessGlobInv(allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Set[BoolExpr] = {
     val constants = {
       val pos = HashSet[Int](0, 1)
       pos.map(n => -n) ++ pos
@@ -284,8 +293,67 @@ object Invariant {
     })
   }
 
+  def guessBounds(vars: Vars, z3Solver: Z3Solver): Set[BoolExpr] = {
+    val sumR = {
+      if (vars.resVars.isEmpty) z3Solver.mkIntVal(0)
+      else if (vars.resVars.size == 1) vars.resVars.head
+      else z3Solver.mkAdd(vars.resVars.toArray: _*)
+    }
+    val sumIn: Expr = {
+      val intArgs = vars.args.filter(arg => arg.isInstanceOf[IntExpr])
+      // assert(intArgs.isEmpty, "The method doesn't have any int-typed arguments!")
+      z3Solver.mkAdd(intArgs.toArray: _*)
+    }
+    val rhses = {
+      Seq.range(1, 3).foldLeft(new HashSet[Expr])({
+        (acc, coeff) =>
+          acc + Seq.range(1, coeff).foldLeft(sumIn)((acc, i) => z3Solver.mkAdd(acc, sumIn))
+      })
+    }
+    rhses.foldLeft(new HashSet[BoolExpr])((acc, rhs) => acc + z3Solver.mkLe(sumR, rhs))
+  }
+
+  def getMethodVars(methodTree: MethodTree, allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Vars = {
+    val (args: Set[Expr], globVarNames: Set[String]) = methodTree.getParameters.asScala.foldLeft(HashSet[Expr](), HashSet(Utils.BOUND_STR))({
+      (acc, variableTree) =>
+        val name = variableTree.getName.toString
+        val typ = TreeUtils.typeOf(variableTree.getType)
+        val variable = {
+          if (typ.getKind == TypeKind.INT) z3Solver.mkIntVar(name)
+          else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
+          else {
+            assert(false)
+            z3Solver.mkFalse()
+          }
+        }
+        (acc._1 + variable, acc._2 + name)
+    })
+
+    val (localVars: Set[Expr], resVars: Set[Expr]) = allVars.foldLeft(HashSet[Expr](), HashSet[Expr]())({
+      case (acc, (name, typ)) =>
+        Utils.getResVarName(name) match {
+          case Some(v) =>
+            assert(typ.getKind == TypeKind.INT, "Resource variables should be int-typed!")
+            (acc._1, acc._2 + z3Solver.mkIntVar(name))
+          case _ =>
+            if (!globVarNames.contains(name)) {
+              val variable = if (typ.getKind == TypeKind.INT) z3Solver.mkIntVar(name)
+              else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
+              else {
+                assert(false)
+                z3Solver.mkFalse()
+              }
+              (acc._1 + variable, acc._2)
+            }
+            else acc
+        }
+    })
+    assert(localVars.intersect(resVars ++ args).isEmpty)
+    Vars(localVars, args, resVars)
+  }
+
   // Return true if the assertion is valid
-  def checkAssert(assertion: BoolExpr, allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): (Boolean, BoolExpr) = {
+  def checkForall(assertion: BoolExpr, allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): (Boolean, BoolExpr) = {
     val toCheck = {
       z3Solver.mkNot(
         z3Solver.mkForall(
@@ -311,12 +379,14 @@ object Invariant {
     else if (invs.size == 1) invs.head
     else z3Solver.mkAnd(invs.toSeq: _*)
   }
+
+  def printTime(): Unit = Utils.printRedString("Local invariant inference's total time is: " + ("%.3f" format TOTAL_TIME) + "s")
 }
 
-case class Result(loc: Block, graph: Graph[Block, DefaultEdge]) {
+case class InvGuess(loc: Block, graph: Graph[Block, DefaultEdge]) {
   override def equals(obj: Any): Boolean = {
     obj match {
-      case res: Result =>
+      case res: InvGuess =>
         val r1 = loc == res.loc
         val r2 = GraphUtil.isSameGraph(graph, res.graph)
         r1 && r2

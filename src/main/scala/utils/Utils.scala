@@ -2,6 +2,8 @@ package utils
 
 import java.io.File
 
+import scala.util.matching.Regex
+
 /**
   * @author Tianhan Lu
   */
@@ -51,6 +53,11 @@ object Utils {
   val BOUND_STR = "bound"
 
   val GLOBAL_STR = "global"
+
+  def getResVarName(name: String): Option[String] = {
+    val resVarRegex: Regex = """R(\d*)""".r
+    resVarRegex.findFirstIn(name)
+  }
 
   def genRandStr(len: Int=4): String = {
     assert(len>0)

@@ -150,7 +150,7 @@ object GraphUtil {
     res
   }
 
-  def getVars(tree: Tree): Set[(String, TypeMirror)] = {
+  def getExprVars(tree: Tree): Set[(String, TypeMirror)] = {
     if (tree == null) return new HashSet[(String, TypeMirror)]
     val res = tree match {
       case expressionTree: ExpressionTree =>
@@ -169,38 +169,38 @@ object GraphUtil {
 
           case binaryTree: BinaryTree =>
             binaryTree.getKind match {
-              case Tree.Kind.CONDITIONAL_AND | Tree.Kind.CONDITIONAL_OR | Tree.Kind.DIVIDE | Tree.Kind.EQUAL_TO | Tree.Kind.GREATER_THAN | Tree.Kind.GREATER_THAN_EQUAL | Tree.Kind.LESS_THAN | Tree.Kind.LESS_THAN_EQUAL | Tree.Kind.MINUS | Tree.Kind.MULTIPLY | Tree.Kind.NOT_EQUAL_TO | Tree.Kind.PLUS => getVars(binaryTree.getLeftOperand) ++ getVars(binaryTree.getRightOperand)
+              case Tree.Kind.CONDITIONAL_AND | Tree.Kind.CONDITIONAL_OR | Tree.Kind.DIVIDE | Tree.Kind.EQUAL_TO | Tree.Kind.GREATER_THAN | Tree.Kind.GREATER_THAN_EQUAL | Tree.Kind.LESS_THAN | Tree.Kind.LESS_THAN_EQUAL | Tree.Kind.MINUS | Tree.Kind.MULTIPLY | Tree.Kind.NOT_EQUAL_TO | Tree.Kind.PLUS => getExprVars(binaryTree.getLeftOperand) ++ getExprVars(binaryTree.getRightOperand)
               case _ => assert(false, expressionTree.toString); new HashSet[(String, TypeMirror)]
             }
 
           case unaryTree: UnaryTree =>
             unaryTree.getKind match {
-              case Tree.Kind.UNARY_PLUS | Tree.Kind.UNARY_MINUS | Tree.Kind.LOGICAL_COMPLEMENT => getVars(unaryTree.getExpression)
+              case Tree.Kind.UNARY_PLUS | Tree.Kind.UNARY_MINUS | Tree.Kind.LOGICAL_COMPLEMENT => getExprVars(unaryTree.getExpression)
               case _ => assert(false, expressionTree.toString); new HashSet[(String, TypeMirror)]
             }
 
-          case parenthesizedTree: ParenthesizedTree => getVars(parenthesizedTree.getExpression)
+          case parenthesizedTree: ParenthesizedTree => getExprVars(parenthesizedTree.getExpression)
 
           case assignmentTree: AssignmentTree =>
-            getVars(assignmentTree.getExpression) + ((assignmentTree.getVariable.toString, TreeUtils.typeOf(assignmentTree.getVariable)))
+            getExprVars(assignmentTree.getExpression) + ((assignmentTree.getVariable.toString, TreeUtils.typeOf(assignmentTree.getVariable)))
 
           case _ => new HashSet[(String, TypeMirror)]
         }
       case variableTree: VariableTree =>
         val initializer = variableTree.getInitializer
-        getVars(initializer) + ((variableTree.getName.toString, TreeUtils.typeOf(variableTree.getType)))
+        getExprVars(initializer) + ((variableTree.getName.toString, TreeUtils.typeOf(variableTree.getType)))
       case _ => new HashSet[(String, TypeMirror)]
     }
     res.filter({ case (name, typ) => name != Utils.BOUND_STR })
   }
 
-  def getAllVars(graph: Graph[Block, DefaultEdge]): Set[(String, TypeMirror)] = {
+  def getProgAllVars(graph: Graph[Block, DefaultEdge]): Set[(String, TypeMirror)] = {
     graph.vertexSet().asScala.flatMap({
       case reg: RegularBlock => reg.getContents.asScala
       case _ => List[Node]()
     }).foldLeft(new HashSet[(String, TypeMirror)])({
       (acc, node) =>
-        if (node != null) acc ++ getVars(node.getTree)
+        if (node != null) acc ++ getExprVars(node.getTree)
         else acc
     })
   }
@@ -209,7 +209,7 @@ object GraphUtil {
 case class MyCFG(cfg: ControlFlowGraph) {
   val graph: DefaultDirectedGraph[Block, DefaultEdge] = GraphUtil.cfgToJgraphtGraph(cfg)
   // val simCycles: Set[List[Block]] = GraphUtil.getAllSimpleCycles(graph)
-  val allVars: Set[(String, TypeMirror)] = GraphUtil.getAllVars(graph)
+  val allVars: Set[(String, TypeMirror)] = GraphUtil.getProgAllVars(graph)
 }
 
 // References
