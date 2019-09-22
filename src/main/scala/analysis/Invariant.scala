@@ -19,9 +19,9 @@ import scala.collection.immutable.{HashMap, HashSet}
 object Invariant {
   val DEBUG_SMTLIB = false
   val DEBUG_LOOP_TRAVERSE = false
-  val DEBUG_LOCAL_INV = true
+  val DEBUG_LOCAL_INV = false
   val DEBUG_GEN_NEW_INV = false
-  val INVS_TO_DEBUG = HashSet("(< (+ i (* (- 1) n)) 0)", "(< (+ (* (- 1) n) i) 0)")
+  private val INVS_TO_DEBUG = HashSet("(< (+ i (* (- 1) n)) 0)", "(< (+ (* (- 1) n) i) 0)")
 
   var TOTAL_TIME: Double = 0
 
@@ -31,7 +31,7 @@ object Invariant {
   def inferLocalInv(loc: Block,
                     graph: Graph[Block, DefaultEdge],
                     allVars: Set[Expr],
-                    pred: BoolExpr, // The predicate abstracting the context under which invariants need to be inferred
+                    ctxPred: BoolExpr, // The predicate abstracting the context under which invariants need to be inferred
                     z3Solver: Z3Solver,
                     indent: Int = 0): Set[BoolExpr] = {
     val start = System.nanoTime()
@@ -110,21 +110,26 @@ object Invariant {
               if (GraphUtil.hasCycle(theSCC)) {
                 // The current block must be the loop head, i.e. one of its successor must be outside the loop
                 val loopBody = theSCC.vertexSet()
-                curBlock match {
-                  case b: ConditionalBlock =>
-                    val thenBlk = b.getThenSuccessor
-                    val elseBlk = b.getElseSuccessor
-                    assert(thenBlk != null && elseBlk != null)
-                    assert(
-                      (!loopBody.contains(thenBlk) && loopBody.contains(elseBlk)) ||
-                        (!loopBody.contains(elseBlk) && loopBody.contains(thenBlk))
-                    )
-                  case _ => assert(false)
-                }
 
                 // Find local invariants for the (semantic) inner loop in the new graph under the context of ??? s.t.
                 // if the invariant is valid right after the loop head, then it will be valid again upon next visit
                 val loopInvs = {
+                  val loopCond = {
+                    curBlock match {
+                      case b: ConditionalBlock =>
+                        val thenBlk = b.getThenSuccessor
+                        val elseBlk = b.getElseSuccessor
+                        assert(thenBlk != null && elseBlk != null)
+                        val branching = PredTrans.getBranchCond(curBlock, newGraph, z3Solver)
+                        if (loopBody.contains(thenBlk)) branching
+                        else if (loopBody.contains(elseBlk)) z3Solver.mkNot(branching)
+                        else {
+                          assert(false)
+                          z3Solver.mkTrue()
+                        }
+                      case _ => assert(false); z3Solver.mkTrue()
+                    }
+                  }
                   // Recursive invocation of this procedure will lead to verifying exponential # of invariants
                   // This is unsound because `true` is not verified to be a valid loop invariant
                   // Additionally, `true` might be too weak to prove the guessed invariant is indeed valid!
@@ -133,7 +138,7 @@ object Invariant {
                     curBlock,
                     theSCC,
                     allVars,
-                    z3Solver.mkTrue(),
+                    loopCond, // The pre-condition to enter the inner loop is that z3Solver.mkTrue(),
                     z3Solver,
                     indent + 2
                   )
@@ -207,7 +212,7 @@ object Invariant {
             // will not be visited a second time via this simple cycle, the guessed local invariant is vacuously valid
           }
 
-          val implication = z3Solver.mkImplies(inv, acc) // TODO: Which direction?
+          val implication = z3Solver.mkImplies(z3Solver.mkAnd(inv, ctxPred), acc) // TODO: Which direction?
           val res = Invariant.checkForall(implication, allVars, z3Solver)
           if (DEBUG_LOCAL_INV && DEBUG_SMTLIB) {
             println(indentStr + "  " + "Check the validity of inv " + inv.toString + " via " + res._2)
@@ -373,7 +378,7 @@ object Invariant {
     (!res, toCheck)
   }
 
-  def getConjunction(invs: Set[BoolExpr], z3Solver: Z3Solver): Expr = {
+  def getConjunction(invs: Traversable[BoolExpr], z3Solver: Z3Solver): Expr = {
     if (invs.isEmpty) z3Solver.mkTrue()
     else if (invs.size == 1) invs.head
     else z3Solver.mkAnd(invs.toSeq: _*)
