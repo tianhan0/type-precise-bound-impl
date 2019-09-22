@@ -21,7 +21,7 @@ object Invariant {
   val DEBUG_LOOP_TRAVERSE = false
   val DEBUG_LOCAL_INV = false
   val DEBUG_GEN_NEW_INV = false
-  private val INVS_TO_DEBUG = HashSet("(< (+ i (* (- 1) n)) 0)", "(< (+ (* (- 1) n) i) 0)")
+  private val INVS_TO_DEBUG = HashSet("(<= (+ (* (- 1) i) R1) 0)")
 
   var TOTAL_TIME: Double = 0
 
@@ -270,7 +270,21 @@ object Invariant {
                                 )
                                 val le = z3Solver.mkLe(add, z3Solver.mkIntVal(c3))
                                 val lt = z3Solver.mkLt(add, z3Solver.mkIntVal(c3))
-                                acc3 + (le.toString -> le) + (lt.toString -> lt)
+
+                                (Utils.getResVarName(var1.toString), Utils.getResVarName(var2.toString)) match {
+                                  case (Some(_), Some(_)) =>
+                                    acc3 + (le.toString -> le) + (lt.toString -> lt)
+                                  case (Some(_), None) =>
+                                    acc3 + (le.toString -> le) + (lt.toString -> lt)
+                                    //if (c1 < 0) acc3
+                                    //else acc3 + (le.toString -> le) + (lt.toString -> lt)
+                                  case (None, Some(_)) =>
+                                    acc3 + (le.toString -> le) + (lt.toString -> lt)
+                                    //if (c2 < 0) acc3
+                                    //else acc3 + (le.toString -> le) + (lt.toString -> lt)
+                                  case (None, None) =>
+                                    acc3 + (le.toString -> le) + (lt.toString -> lt)
+                                }
                               }
                           })
                       })
@@ -378,7 +392,7 @@ object Invariant {
     (!res, toCheck)
   }
 
-  def getConjunction(invs: Traversable[BoolExpr], z3Solver: Z3Solver): Expr = {
+  def getConjunction(invs: Iterable[BoolExpr], z3Solver: Z3Solver): Expr = {
     if (invs.isEmpty) z3Solver.mkTrue()
     else if (invs.size == 1) invs.head
     else z3Solver.mkAnd(invs.toSeq: _*)

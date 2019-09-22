@@ -47,7 +47,10 @@ object Utils {
 
   def getPercentage(d: Double): String = ("%.3f" format d * 100) + "%"
 
-  def assertFalse(str: String): Unit = { Utils.printRedString(str); assert(false) }
+  def assertFalse(str: String): Unit = {
+    Utils.printRedString(str);
+    assert(false)
+  }
 
   val NANO = 1000000000
 
@@ -62,31 +65,31 @@ object Utils {
     resVarRegex.findFirstIn(name)
   }
 
-  def genRandStr(len: Int=4): String = {
-    assert(len>0)
+  def genRandStr(len: Int = 4): String = {
+    assert(len > 0)
     val r = new scala.util.Random()
     // val res = for (i <- 0 to r.nextInt(len)+1) yield r.nextPrintableChar
     var i = 0
     var res = ""
-    while (i<len) {
+    while (i < len) {
       val ch = r.nextPrintableChar
       // if ((ch>='a' && ch<='z') || (ch>='A' && ch<='Z') || (ch>='0' && ch<='9')) {
-      if (ch>='a' && ch<='z') {
+      if (ch >= 'a' && ch <= 'z') {
         res = res + ch.toString
         i += 1
       }
     }
-    res.foldLeft(""){ (acc, ch) => acc+ch }
+    res.foldLeft("") { (acc, ch) => acc + ch }
   }
 
   def getLineNumber(node: Tree, positions: SourcePositions, root: CompilationUnitTree): Long = {
     root.getLineMap.getLineNumber(positions.getStartPosition(root, node))
   }
 
-  def crossJoin[T](list: Traversable[Traversable[T]]): Traversable[Traversable[T]] =
-  // References:
-  // https://stackoverflow.com/questions/14740199/cross-product-in-scala
-  // https://stackoverflow.com/questions/54330356/scala-create-all-possible-permutations-of-a-sentence-based-synonyms-of-each-wor
+  def crossJoin[T](list: Traversable[Traversable[T]]): Traversable[Traversable[T]] = {
+    // References:
+    // https://stackoverflow.com/questions/14740199/cross-product-in-scala
+    // https://stackoverflow.com/questions/54330356/scala-create-all-possible-permutations-of-a-sentence-based-synonyms-of-each-wor
     list match {
       case Nil => Nil
       case xs :: Nil => xs map (Traversable(_))
@@ -96,4 +99,13 @@ object Utils {
       } yield Traversable(i) ++ j
       // case x@_ => println(x); Nil
     }
+  }
+
+  def power[A](t: Set[A]): Set[Set[A]] = {
+    def pwr(t: Set[A], ps: Set[Set[A]]): Set[Set[A]] =
+      if (t.isEmpty) ps
+      else pwr(t.tail, ps ++ (ps map (_ + t.head)))
+
+    pwr(t, Set(Set.empty[A])) //Powerset of ∅ is {∅}
+  }
 }

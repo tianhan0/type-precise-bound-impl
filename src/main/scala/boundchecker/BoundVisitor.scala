@@ -20,7 +20,7 @@ import scala.collection.immutable.{HashMap, HashSet}
   */
 class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotatedTypeFactory](checker) {
   val DEBUG_VISIT_ASSIGN = false
-  val DEBUG_LOCAL_INV = false
+  val DEBUG_LOCAL_INV = true
   val DEBUG_GLOBAL_INV = false
   val DEBUG_VERIFICATION = false
 
@@ -32,16 +32,8 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   var bounds = new HashMap[MethodTree, Set[BoolExpr]]
   var vars = new HashMap[MethodTree, Vars]
 
-  Runtime.getRuntime.addShutdownHook(new Thread() {
-    override def run(): Unit = {
-      checkBound()
-      println()
-      Z3Solver.printTime()
-      Invariant.printTime()
-    }
-
-    // Reference: SourceChecker.typeProcessingStart
-  })
+  sys.addShutdownHook(checkBound())
+  // Reference: SourceChecker.typeProcessingStart
 
   override def visitMethod(node: MethodTree, p: Void): Void = {
     val treePath = atypeFactory.getPath(node)
@@ -246,51 +238,70 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
 
         localInvs.get(methodTree) match {
           case Some(map) =>
-            val locals = map.values.flatMap({
-              locals =>
-                val localsCompatibleWithGlobals = locals.filter({
-                  local =>
-                    val exist = {
-                      val body = z3Solver.mkAnd(local, globals)
-                      // Check if there exists an assignment to all variables such that the conjunction of the current
-                      // local invariant and global invariants are SAT, because the verified local invariants
-                      // may contradict global invariants (i.e. there exists no state that both satisfy
-                      // local and global invariants), in which case we will have `false=>anything`.
-                      z3Solver.mkExists(vars.allVars.toArray, body) // TODO: all variables or global variables or ???
-                    }
-                    val res = z3Solver.checkSAT(exist)
-                    res
-                })
-                localsCompatibleWithGlobals
-            })
+            // Each subset is a set of local invariants
+            val locals: Set[Set[BoolExpr]] = {
+              val locals = map.values.foldLeft(new HashSet[BoolExpr])({
+                (acc, locals) =>
+                  val localsCompatibleWithGlobals = locals.filter({
+                    local =>
+                      val exist = {
+                        val body = z3Solver.mkAnd(local, globals)
+                        // Check if there exists an assignment to all variables such that the conjunction of the current
+                        // local invariant and global invariants are SAT, because the verified local invariants
+                        // may contradict global invariants (i.e. there exists no state that both satisfy
+                        // local and global invariants), in which case we will have `false=>anything`.
+                        z3Solver.mkExists(vars.allVars.toArray, body) // TODO: all variables or global variables or ???
+                      }
+                      val res = z3Solver.checkSAT(exist)
+                      res
+                  })
+                  acc ++ localsCompatibleWithGlobals
+              })
+              Utils.power(locals)
+              // Error "java.lang.NoClassDefFoundError: scala/collection/SetLike$$anon$1" is caused by invoking
+              // XXX.subset(). The error is fixed by implementing power set generation
+            }
 
             val exists = {
-              val l = Invariant.getConjunction(locals, z3Solver)
-              val body = z3Solver.mkAnd(l, globals)
-              if (localVars.isEmpty) body
-              else z3Solver.mkExists(localVars.toArray, body)
+              locals.foldLeft(new HashSet[Expr])({
+                (acc, subset) =>
+                  val l = Invariant.getConjunction(subset, z3Solver)
+                  val body = z3Solver.mkAnd(l, globals)
+                  val exist = {
+                    if (localVars.isEmpty) body
+                    else z3Solver.mkExists(localVars.toArray, body)
+                  }
+                  val res = z3Solver.checkSAT(exist)
+                  if (res) acc + exist
+                  else {
+                    acc
+                  }
+              })
             }
 
             val (success: Set[Expr], failure: Set[Expr]) = bounds1.foldLeft((HashSet[Expr](), HashSet[Expr]()))({
               (acc3, bound) =>
-                // We check a new assertion only if all previous checks failed
-                // if (acc4._1.isEmpty) {
-                val toCheck = {
-                  z3Solver.mkForall(
-                    globalVars.toArray,
-                    // We should use `implication` here (instead of `and`), because we don't expect all inputs
-                    // to satisfy both invariants and bounds. We only care if those program states that
-                    // satisfy invariants also satisfy bounds
-                    z3Solver.mkImplies(exists, bound)
-                  )
-                }
+                exists.foldLeft(acc3)({
+                  (acc4, exist) =>
+                    // We check a new assertion only if all previous checks failed
+                    // if (acc4._1.isEmpty) {
+                    val toCheck = {
+                      z3Solver.mkForall(
+                        globalVars.toArray,
+                        // We should use `implication` here (instead of `and`), because we don't expect all inputs
+                        // to satisfy both invariants and bounds. We only care if those program states that
+                        // satisfy invariants also satisfy bounds
+                        z3Solver.mkImplies(exist, bound)
+                      )
+                    }
 
-                val res = z3Solver.checkSAT(toCheck)
-                if (DEBUG_VERIFICATION) println("\n" + res + "\n" + toCheck.toString)
-                if (res) (acc3._1 + bound, acc3._2)
-                else (acc3._1, acc3._2 + bound)
-              // }
-              // else acc4
+                    val res = z3Solver.checkSAT(toCheck)
+                    if (DEBUG_VERIFICATION) println("\n" + res + "\n" + toCheck.toString)
+                    if (res) (acc4._1 + bound, acc4._2)
+                    else (acc4._1, acc4._2 + bound)
+                  // }
+                  // else acc4
+                })
             })
 
             if (bounds1.nonEmpty) results = results + (methodTree -> (success, failure))
@@ -310,6 +321,10 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
           failure.foreach(bound => Utils.printRedString("Bound " + bound.toString + " for method " + methodName + " is not verified"))
         }
     })
+
+    println()
+    Z3Solver.printTime()
+    Invariant.printTime()
   }
 }
 
