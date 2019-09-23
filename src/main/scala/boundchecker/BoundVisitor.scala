@@ -31,9 +31,27 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   var assumptions = new HashMap[MethodTree, Set[BoolExpr]] // Additional unchecked global invariants
   var bounds = new HashMap[MethodTree, Set[BoolExpr]]
   var vars = new HashMap[MethodTree, Vars]
+  var results = new HashSet[BndResult]
+
+  val MAX_NUM_OF_LOCAL_INVS = 16
 
   // sys.addShutdownHook(checkBound())
   // Reference: SourceChecker.typeProcessingStart
+
+  override def processClassTree(classTree: ClassTree): Unit = {
+    super.processClassTree(classTree)
+
+    println()
+    val verifiedBounds = results.filter(res => res.isSuccessful)
+    Utils.printYellowString("# of methods that are successfully verified with bounds are " + verifiedBounds.size + " out of " + results.size)
+    if (verifiedBounds.nonEmpty) {
+      Utils.printYellowString("Below are these methods:")
+      verifiedBounds.foreach(res => Utils.printYellowString(res.methodTree.getName.toString))
+    }
+    println()
+    Z3Solver.printTime()
+    Invariant.printTime()
+  }
 
   override def visitMethod(node: MethodTree, p: Void): Void = {
     val treePath = atypeFactory.getPath(node)
@@ -212,8 +230,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   }
 
   def checkBound(node: MethodTree): Unit = {
-    var results = new HashSet[BndResult]
-    if (this.bounds.nonEmpty) println("\n===============================================\nBound verification starts for method " + "...")
+    if (this.bounds.nonEmpty) println("\n===============================================\nBound verification starts for method " + node.getName.toString + "...")
 
     this.bounds.filter(m => m._1 == node).foreach({
       case (methodTree, bounds1) =>
@@ -242,7 +259,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
             // Each subset is a set of local invariants
             val locals: Iterator[Set[BoolExpr]] = {
               val locals = map.values.foldLeft(new HashSet[BoolExpr])({
-                (acc, locals) =>
+                (acc, locals: Set[BoolExpr]) =>
                   val localsCompatibleWithGlobals = locals.filter({
                     local =>
                       val exist = {
@@ -257,8 +274,13 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
                       res
                   })
                   acc ++ localsCompatibleWithGlobals
-              }).subsets()
-              locals
+              })
+              // Limit the # of local invariants that we use
+              if (locals.size > MAX_NUM_OF_LOCAL_INVS) {
+                Utils.printYellowString("Truncating the # of local invariants from " + locals.size + " into " + MAX_NUM_OF_LOCAL_INVS + "...")
+                locals.slice(0, MAX_NUM_OF_LOCAL_INVS).subsets()
+              }
+              else locals.subsets()
               // Utils.power(locals)
               // Error "java.lang.NoClassDefFoundError: scala/collection/SetLike$$anon$1" is caused by invoking
               // XXX.subset(). The error is fixed by implementing power set generation
@@ -309,16 +331,14 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
                 })
             })
 
-            if (bounds1.nonEmpty) results = results + BndResult(methodTree, success, failure)
+            if (bounds1.nonEmpty) {
+              val bndRes = BndResult(methodTree, success, failure)
+              bndRes.printResults()
+              results = results + bndRes
+            }
           case None =>
         }
     })
-
-    results.foreach(bndRes => bndRes.printResults())
-
-    println()
-    Z3Solver.printTime()
-    Invariant.printTime()
   }
 }
 
@@ -327,15 +347,17 @@ case class Vars(locals: Set[Expr], args: Set[Expr], resVars: Set[Expr]) {
 }
 
 case class BndResult(methodTree: MethodTree, success: Set[Expr], failure: Set[Expr]) {
+  val isSuccessful: Boolean = success.nonEmpty
+
   def printResults(): Unit = {
     val methodName = methodTree.getName.toString
     println("\nResults for method " + methodName)
     if (success.nonEmpty) {
-      success.foreach(bound => Utils.printGreenString("Bound " + bound.toString + " for method " + methodName + " is verified"))
+      success.foreach(bound => Utils.printGreenString("[success] Bound " + bound.toString + " for method " + methodName + " is verified"))
     }
     else if (success.isEmpty) {
       assert(failure.nonEmpty)
-      failure.foreach(bound => Utils.printRedString("Bound " + bound.toString + " for method " + methodName + " is not verified"))
+      failure.foreach(bound => Utils.printRedString("[failure] Bound " + bound.toString + " for method " + methodName + " is not verified"))
     }
   }
 }

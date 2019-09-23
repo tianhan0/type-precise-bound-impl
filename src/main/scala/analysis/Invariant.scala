@@ -262,7 +262,7 @@ object Invariant {
                         (acc2, c2) =>
                           constants.foldLeft(acc2)({
                             (acc3, c3) =>
-                              if (c1 < 0 && c2 < 0) acc3
+                              if (c1 * c2 > 0) acc3
                               else {
                                 val add = z3Solver.mkAdd(
                                   if (c1 == 1) var1 else z3Solver.mkMul(z3Solver.mkIntVal(c1), var1),
@@ -275,13 +275,13 @@ object Invariant {
                                   case (Some(_), Some(_)) =>
                                     acc3 + (le.toString -> le) + (lt.toString -> lt)
                                   case (Some(_), None) =>
-                                    acc3 + (le.toString -> le) + (lt.toString -> lt)
-                                    //if (c1 < 0) acc3
-                                    //else acc3 + (le.toString -> le) + (lt.toString -> lt)
+                                    // acc3 + (le.toString -> le) + (lt.toString -> lt)
+                                    if (c1 < 0) acc3
+                                    else acc3 + (le.toString -> le) + (lt.toString -> lt)
                                   case (None, Some(_)) =>
-                                    acc3 + (le.toString -> le) + (lt.toString -> lt)
-                                    //if (c2 < 0) acc3
-                                    //else acc3 + (le.toString -> le) + (lt.toString -> lt)
+                                    // acc3 + (le.toString -> le) + (lt.toString -> lt)
+                                    if (c2 < 0) acc3
+                                    else acc3 + (le.toString -> le) + (lt.toString -> lt)
                                   case (None, None) =>
                                     acc3 + (le.toString -> le) + (lt.toString -> lt)
                                 }
