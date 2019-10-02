@@ -2,7 +2,7 @@ name := "type-precise-bound-impl"
 
 version := "0.1"
 
-scalaVersion := "2.12.7"
+scalaVersion := "2.12.8"
 
 // https://mvnrepository.com/artifact/org.checkerframework/checker
 libraryDependencies += "org.checkerframework" % "checker" % "2.11.0"
