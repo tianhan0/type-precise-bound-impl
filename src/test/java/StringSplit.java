@@ -16,5 +16,6 @@ public class StringSplit {
         }
         R2 += count-off;
         off = count;
+        assert (R1 <= count) : "bound";
     }
 }

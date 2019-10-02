@@ -1,3 +1,5 @@
+package benchmarks.success;
+
 /**
  * @author Tianhan Lu
  */

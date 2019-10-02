@@ -5,38 +5,37 @@ public abstract class Gulwani2010reachability {
     abstract boolean nonDet();
 
     void Ex1(int n, boolean A) {
-        int i=0;
-        int R=0;
-        int j=0;
-        while (i<n) {
-            j=i+1;
-            while (j<n) {
-                if(A) {
-                    j=j-1;
-                    n=n-1;
-                    R=R+1;
+        int i = 0;
+        int R = 0;
+        int j = 0;
+        while (i < n) {
+            j = i + 1;
+            while (j < n) {
+                if (A) {
+                    j = j - 1;
+                    n = n - 1;
+                    R = R + 1;
                     // {R+n≤n0+1}
                 }
-                j=j+1;
+                j = j + 1;
             }
-            i=i+1;
+            i = i + 1;
         }
         // Global invariant: n>=0
         // Bound: R≤n0+1
     }
 
     void Ex2(int n, int m) {
-        int R=0;
-        while (n>0 && m>0) {
-            n=n-1;
-            m=m-1;
-            boolean b = nonDet();
+        boolean b = false;
+        int R = 0;
+        while (n > 0 && m > 0) {
+            n = n - 1;
+            m = m - 1;
             while (b) {
-                n=n-1;
-                m=m+1;
+                n = n - 1;
+                m = m + 1;
                 // {R+n≤n0-2}
-                b = nonDet();
-                R=R+1;
+                R = R + 1;
             }
         }
         // Global invariant: n>0
@@ -44,13 +43,13 @@ public abstract class Gulwani2010reachability {
     }
 
     void Ex3(int n, boolean A) {
-        boolean t=false;
-        int R=0;
-        while (n>0) {
-            t=A;
-            while (n>0 && t==A) {
-                n=n-1;
-                R=R+1;
+        boolean t = false;
+        int R = 0;
+        while (n > 0) {
+            t = A;
+            while (n > 0 && t == A) {
+                n = n - 1;
+                R = R + 1;
                 // {R+n≤n0-1}
             }
         }
@@ -59,14 +58,14 @@ public abstract class Gulwani2010reachability {
     }
 
     void Ex4(int n) {
-        boolean flag=true;
-        int R=0;
-        while(flag) {
-            flag=false;
-            while (n>0 && nonDet()) {
-                n=n-1;
-                flag=true;
-                R=R+1;
+        boolean flag = true;
+        int R = 0;
+        while (flag) {
+            flag = false;
+            while (n > 0 && nonDet()) {
+                n = n - 1;
+                flag = true;
+                R = R + 1;
                 // {R+n<=n0}
             }
         }
@@ -75,24 +74,24 @@ public abstract class Gulwani2010reachability {
     }
 
     void Ex5(int n) {
-        int i=0;
+        int i = 0;
         boolean flag;
-        int R=0;
-        while (i<n) {
-            flag=false;
+        int R = 0;
+        while (i < n) {
+            flag = false;
             boolean b1 = nonDet();
             while (b1) {
                 boolean b2 = nonDet();
                 if (b2) {
-                    flag=true;
-                    n=n-1;
-                    R=R+1;
+                    flag = true;
+                    n = n - 1;
+                    R = R + 1;
                     // {R+n<=n0}
                 }
                 b1 = nonDet();
             }
             if (!flag) {
-                i=i+1;
+                i = i + 1;
             }
         }
         // Global invariant: i>0 && n>0
@@ -100,16 +99,16 @@ public abstract class Gulwani2010reachability {
     }
 
     void Ex6(int n, int x, int z) {
-        int R1=0;
-        int R2=0;
-        while (x<n) {
-            if (z>x) {
-                x=x+1;
-                R1=R1+1;
+        int R1 = 0;
+        int R2 = 0;
+        while (x < n) {
+            if (z > x) {
+                x = x + 1;
+                R1 = R1 + 1;
                 // {R1=x-x0 ∧ z>x ∧ x<n}
             } else {
-                z=z+1;
-                R2=R2+1;
+                z = z + 1;
+                R2 = R2 + 1;
                 // {R2=z-z0 ∧ z≤x ∧ x<n}
             }
         }
@@ -118,19 +117,19 @@ public abstract class Gulwani2010reachability {
     }
 
     void Ex7(int n, int m) {
-        assert(0<n && n<m);
-        int j=n+1;
-        int R1=0;
-        int R2=0;
-        while (j<n || j>n) { // j!=n
-            if (j>m) {
-                j=0;
-                R1=R1+1;
+        assert (0 < n && n < m) : "global";
+        int j = n + 1;
+        int R1 = 0;
+        int R2 = 0;
+        while (j < n || j > n) { // j!=n
+            if (j > m) {
+                j = 0;
+                R1 = R1 + 1;
                 // {R1=1}: Verification relies on the loop invariant of keeping executing line 125: Will not visit this location again
             } else {
                 // j0, R20
-                j=j+1;
-                R2=R2+1;
+                j = j + 1;
+                R2 = R2 + 1;
                 // {j-R2=j0-R20 and j0<=m and (j0>n or j0<n) and j<=m and (j>n or j<n)}
             }
         }
@@ -139,31 +138,32 @@ public abstract class Gulwani2010reachability {
     }
 
     void Ex8() {
-        int x=0;
-        int y=0;
-        boolean b = nonDet();
+        int x = 0;
+        int y = 0;
+        int R = 0;
+        boolean b = false;
         while (b) {
-            if (x!=50) {
-                y++;
+            if (x != 50) {
+                y = y + 1;
             } else {
-                y--;
+                y = y - 1;
             }
-            if (y<0) break;
-            x=x+1;
-            b = nonDet();
+            if (y < 0) break;
+            x = x + 1;
+            R = R + 1;
         }
         // Bound: x=102
     }
 
     void Ex9() {
-        int x=0;
-        int y=50;
-        while (x<100) {
-            if (x<50) {
-                x=x+1;
+        int x = 0;
+        int y = 50;
+        while (x < 100) {
+            if (x < 50) {
+                x = x + 1;
             } else {
-                x=x+1;
-                y=y+1; // Consider y as resource consumption
+                x = x + 1;
+                y = y + 1; // Consider y as resource consumption
                 // {y-x=50-x0 and 100>x0>=50 and 100>x>=50}
             }
         }
@@ -171,29 +171,29 @@ public abstract class Gulwani2010reachability {
     }
 
     void Ex10(int x, int y) {
-        assert (x!=y);
-        boolean lock=false;
-        while (x!=y) {
-            lock=true;
-            x=y;
+        assert (x != y);
+        boolean lock = false;
+        while (x != y) {
+            lock = true;
+            x = y;
             if (nonDet()) {
-                lock=false;
-                y=y+1;
+                lock = false;
+                y = y + 1;
             }
         }
     }
 
     void Ex11(int N) {
-        int x=0;
-        int upd=0;
+        int x = 0;
+        int upd = 0;
         int l;
-        while (x<N) {
+        while (x < N) {
             boolean b = nonDet();
             if (b) {
-                l=x;
-                upd=1;
+                l = x;
+                upd = 1;
             }
-            x=x+1;
+            x = x + 1;
         }
         // Bound: l<N
     }

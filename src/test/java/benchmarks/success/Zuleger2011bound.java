@@ -1,3 +1,5 @@
+package benchmarks.success;
+
 /**
  * @author Tianhan Lu
  */
@@ -13,7 +15,7 @@ abstract public class Zuleger2011bound {
             i=i+1;
             j=0;
             // boolean b = nonDet();
-            while(i<n && b) {
+            while(i<n) { // && b
                 i=i+1;
                 j=j+1;
                 // b = nonDet();
@@ -24,8 +26,8 @@ abstract public class Zuleger2011bound {
                 i=i-1;
             }
         }
-        assert (i <= n) : "global";
-        assert (R <= n) : "bound";
+        // assert (i <= n) : "global";
+        // assert (R <= n) : "bound";
     }
 
     /*void bin_search_StepSize2(int r, int s) {
