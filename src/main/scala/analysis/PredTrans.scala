@@ -18,8 +18,9 @@ import scala.collection.immutable.{HashMap, HashSet}
   */
 // Weakest precondition computation over a graph, instead of an AST
 object PredTrans {
+  val DEBUG_SMTLIB = false
   val DEBUG_TRANS_EXPR = false
-  val DEBUG = false
+  val DEBUG = true
   val DEBUG_WLP_LOOP = DEBUG
   val DEBUG_WLP_PROG = DEBUG
   val DEBUG_WLP_BLOCK = false
@@ -114,22 +115,39 @@ object PredTrans {
     }
   }
 
-  // Compute the weakest precondition of the given predicate before the program starting at the given block
+  // Compute the weakest pre-condition of the given predicate (which is the post-condition at all
+  // leaf nodes or only at the exit node) before the program's entry point
   def wlpProg(root: Block,
               graph: Graph[Block, DefaultEdge],
               pred: BoolExpr,
+              exit: Option[Block],
               z3Solver: Z3Solver): BoolExpr = {
     if (DEBUG_WLP_PROG) {
-      println("\n\n\nInfer WLP before block " + root.getId + " in program " + graph.vertexSet().asScala.map(b => b.getId) + " with post-condition " + pred)
+      val exitStr = {
+        exit match {
+          case Some(b) => " at a particular exit block " + b.getId
+          case None => " at all leaf nodes"
+        }
+      }
+      println("\n\n\nInfer WLP before program root block " + root.getId + " in program " + graph.vertexSet().asScala.map(b => b.getId) + " with post-condition " + pred + exitStr)
     }
-
-    val progNodes = graph.vertexSet().asScala
 
     // Check graph validity
     assert(graph.inDegreeOf(root) == 0)
 
+    val newGraph = GraphUtil.cloneGraph(graph)
+    exit match {
+      case Some(exitBlk) =>
+        val progNodes = newGraph.vertexSet().asScala
+        progNodes
+          .filterNot(block => GraphUtil.isReachable(block, exitBlk, newGraph))
+          .foreach({ block => newGraph.removeVertex(block) })
+      case None =>
+    }
+    val progNodes = newGraph.vertexSet().asScala
+
     // SCC condensation graph
-    val sccCds = GraphUtil.getSCCCondensation(graph)
+    val sccCds = GraphUtil.getSCCCondensation(newGraph)
 
     // Topologically sort SCCs
     val predicates = GraphUtil.reverseTopological(sccCds).foldLeft(new HashMap[Graph[Block, DefaultEdge], (BoolExpr, BoolExpr)])({
@@ -165,31 +183,37 @@ object PredTrans {
               nxtBlks.head
             }
 
-            if (DEBUG_WLP_PROG) println("Next block is " + nxtBlk.getId + ": " + nxtBlk)
+            if (DEBUG_WLP_PROG) println("Next block is " + nxtBlk.getId + (if (DEBUG_SMTLIB) ": " + nxtBlk else ""))
 
             // If the next block is a conditional block, then the current block's post-condition
             // should be the pre-condition of that conditional block
             nxtBlk match {
               case nxtBlk: ConditionalBlock =>
-                val cond = getBranchCond(nxtBlk, graph, z3Solver)
+                val cond = getBranchCond(nxtBlk, newGraph, z3Solver)
                 val branches = sccCds.outgoingEdgesOf(nxtSCC).asScala
                 val (thenSCC, elseSCC) = {
                   val emptyGraph = new DefaultDirectedGraph[Block, DefaultEdge](classOf[DefaultEdge])
                   val twoSCCs = branches.toList.map(edge => sccCds.getEdgeTarget(edge))
-                  val headSCC = twoSCCs.head
-                  val headIsThen = headSCC.vertexSet().contains(nxtBlk.getThenSuccessor)
-                  val headIsElse = headSCC.vertexSet().contains(nxtBlk.getElseSuccessor)
-                  if (branches.size == 2) {
-                    if (headIsThen) (headSCC, twoSCCs(1))
-                    else (twoSCCs(1), headSCC)
-                  }
-                  else if (branches.size == 1) {
-                    if (headIsThen) (headSCC, emptyGraph)
-                    else (emptyGraph, headSCC)
+
+                  if (branches.isEmpty) {
+                    (emptyGraph, emptyGraph)
                   }
                   else {
-                    assert(false)
-                    (emptyGraph, emptyGraph)
+                    val headSCC = twoSCCs.head
+                    val headIsThen = headSCC.vertexSet().contains(nxtBlk.getThenSuccessor)
+                    val headIsElse = headSCC.vertexSet().contains(nxtBlk.getElseSuccessor)
+                    if (branches.size == 2) {
+                      if (headIsThen) (headSCC, twoSCCs(1))
+                      else (twoSCCs(1), headSCC)
+                    }
+                    else if (branches.size == 1) {
+                      if (headIsThen) (headSCC, emptyGraph)
+                      else (emptyGraph, headSCC)
+                    }
+                    else {
+                      assert(false)
+                      (emptyGraph, emptyGraph)
+                    }
                   }
                 }
 
@@ -214,7 +238,10 @@ object PredTrans {
                       z3Solver.mkImplies(cond, z3Solver.mkTrue()), // TODO: Is this correct?
                       z3Solver.mkImplies(z3Solver.mkNot(cond), elsePred._1)
                     )
-                  case _ => assert(false); z3Solver.mkFalse()
+                  case _ =>
+                    // It is possible that the next block (which is a conditional block)'s
+                    // both successor blocks are not in the current graph
+                    z3Solver.mkFalse()
                 }
               case nxtBlk: SingleSuccessorBlock =>
                 acc.get(nxtSCC) match {
@@ -263,7 +290,7 @@ object PredTrans {
             wlpBlock(nodes.head, postPred, z3Solver)
           }
         }
-        if (DEBUG_WLP_PROG) {
+        if (DEBUG_WLP_PROG && DEBUG_SMTLIB) {
           println("Pre: " + prePred + "\nPost: " + postPred + "\n")
           /*z3Solver.push()
           z3Solver.mkAssert(prePred)
@@ -324,8 +351,8 @@ object PredTrans {
 
     val branching = getBranchCond(loopHead, loopBody, z3Solver)
 
-    if (DEBUG_WLP_LOOP) println("Assigned vars: " + assignedVars)
-    if (DEBUG_WLP_LOOP) println("Loop condition: " + branching)
+    // if (DEBUG_WLP_LOOP) println("Assigned vars: " + assignedVars)
+    // if (DEBUG_WLP_LOOP) println("Loop condition: " + branching)
 
     // Find the weakest precondition when executing the loop body once
     val newGraph = GraphUtil.cloneGraph(loopBody)
@@ -347,7 +374,7 @@ object PredTrans {
       case _ =>
     })
 
-    val loopBodyWlp = wlpProg(loopHead, newGraph, pred, z3Solver)
+    val loopBodyWlp = wlpProg(loopHead, newGraph, pred, None, z3Solver)
     val body: Expr = {
       val loopCond = {
         if (loopBlks.contains(loopHead.asInstanceOf[ConditionalBlock].getThenSuccessor)) branching
@@ -388,7 +415,7 @@ object PredTrans {
       }
     }
     val ret = z3Solver.mkAnd(loopInv, body)
-    if (DEBUG_WLP_LOOP) println("WLP before the loop: " + ret)
+    if (DEBUG_WLP_LOOP && DEBUG_SMTLIB) println("WLP before the loop: " + ret)
     ret
   }
 

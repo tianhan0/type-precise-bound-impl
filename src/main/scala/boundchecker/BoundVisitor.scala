@@ -80,10 +80,10 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
       if (myVars.args.nonEmpty && myVars.resVars.nonEmpty) {
         val guesses = Invariant.guessBounds(myVars, z3Solver)
         bounds = bounds + (node -> guesses)
-        println("We attempt to automatically verify " + guesses.size + " bound(s) for method " + node.getName)
+        println("\nWe attempt to automatically verify " + guesses.size + " bound(s) for method " + node.getName)
       }
       else {
-        println("We did not attempt to verify bounds for method " + node.getName + ", because it does not contain resource variables or method arguments")
+        println("\nWe did not attempt to verify bounds for method " + node.getName + ", because it does not contain resource variables or method arguments")
       }
     }
     catch {
@@ -120,11 +120,11 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         if (DEBUG_VISIT_ASSIGN) println("Visiting assignment in block: " + curBlock.getId)
 
         // GraphUtil.printGraph(myCFG.graph)
-        val invs = Invariant.inferLocalInv(curBlock, myCFG.graph, vars.allVars, z3Solver.mkTrue(), z3Solver)
+        val invs = Invariant.inferLocalInv(curBlock, myCFG.graph, vars, z3Solver.mkTrue(), true, z3Solver)
         if (invs.isEmpty) issueWarning(node, "No invariant is inferred!")
 
         if (DEBUG_LOCAL_INV) {
-          Utils.printRedString("\nWe inferred " + invs.size + " local invariants at line " + Utils.getLineNumber(node, positions, root))
+          Utils.printYellowString("\nWe inferred " + invs.size + " local invariants at line " + Utils.getLineNumber(node, positions, root))
           invs.foreach(b => Utils.printCyanString(b.toString))
           println()
         }
@@ -230,7 +230,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
   }
 
   def checkBound(node: MethodTree): Unit = {
-    if (this.bounds.nonEmpty) println("\n===============================================\nBound verification starts for method " + node.getName.toString + "...")
+    if (this.bounds.nonEmpty) println("===============================================\nBound verification starts for method " + node.getName.toString + "...")
 
     this.bounds.filter(m => m._1 == node).foreach({
       case (methodTree, bounds1) =>
@@ -258,23 +258,25 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
           case Some(map) =>
             // Each subset is a set of local invariants
             val locals: Iterator[Set[BoolExpr]] = {
-              val locals = map.values.foldLeft(new HashSet[BoolExpr])({
-                (acc, locals: Set[BoolExpr]) =>
+              /*val locals = map.foldLeft(new HashSet[BoolExpr])({
+                case (acc, (node: Tree, locals: Set[BoolExpr])) =>
                   val localsCompatibleWithGlobals = locals.filter({
                     local =>
-                      val exist = {
-                        val body = z3Solver.mkAnd(local, globals)
+                      val forall = {
+
+                        val body = z3Solver.mkImplies(globals, local)
                         // Check if there exists an assignment to all variables such that the conjunction of the current
                         // local invariant and global invariants are SAT, because the verified local invariants
                         // may contradict global invariants (i.e. there exists no state that both satisfy
                         // local and global invariants), in which case we will have `false=>anything`.
-                        z3Solver.mkExists(vars.allVars.toArray, body) // TODO: all variables or global variables or ???
+                        z3Solver.mkForall(vars.allVars.toArray, body) // TODO: all variables or global variables or ???
                       }
-                      val res = z3Solver.checkSAT(exist)
+                      val res = z3Solver.checkSAT(forall)
                       res
                   })
                   acc ++ localsCompatibleWithGlobals
-              })
+              })*/
+              val locals = map.values.flatten.toSet
               // Limit the # of local invariants that we use
               if (locals.size > MAX_NUM_OF_LOCAL_INVS) {
                 Utils.printYellowString("Truncating the # of local invariants from " + locals.size + " into " + MAX_NUM_OF_LOCAL_INVS + "...")

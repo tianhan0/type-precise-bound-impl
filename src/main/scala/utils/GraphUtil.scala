@@ -16,7 +16,7 @@ import org.jgrapht.alg.cycle.{CycleDetector, JohnsonSimpleCycles}
 import org.jgrapht.alg.interfaces.StrongConnectivityAlgorithm
 import org.jgrapht.graph.{DefaultDirectedGraph, DefaultEdge}
 import org.jgrapht.io.{ComponentNameProvider, DOTExporter}
-import org.jgrapht.traverse.TopologicalOrderIterator
+import org.jgrapht.traverse.{DepthFirstIterator, TopologicalOrderIterator}
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.HashSet
@@ -70,6 +70,15 @@ object GraphUtil {
   def getSCCCondensation[V, E](graph: Graph[V, E]): Graph[Graph[V, E], DefaultEdge] = {
     val scAlg: StrongConnectivityAlgorithm[V, E] = new KosarajuStrongConnectivityInspector[V, E](graph)
     scAlg.getCondensation
+  }
+
+  def isReachable[V, E](from: V, to: V, graph: Graph[V, E]): Boolean = {
+    val it = new DepthFirstIterator(graph, from)
+    while (it.hasNext) {
+      val v = it.next()
+      if (v == to) return true
+    }
+    false
   }
 
   def printGraphtoPDF(graph: Graph[Block, DefaultEdge], fileName: String): Unit = {
