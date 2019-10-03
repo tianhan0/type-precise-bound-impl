@@ -71,14 +71,14 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         GraphUtil.printGraphtoPDF(myCFG.graph, Utils.OUTPUT_DIR + Utils.SEPARATOR + classTree.getSimpleName + "_" + node.getName.toString)
       }
 
-      globalInvs = globalInvs + (node -> Invariant.guessGlobInv(GraphUtil.getProgAllVars(myCFG.graph), z3Solver))
+      globalInvs = globalInvs + (node -> Invariant.genIntervalInv(GraphUtil.getProgAllVars(myCFG.graph), z3Solver))
 
       val myVars = Invariant.getMethodVars(node, myCFG.allVars, z3Solver)
 
       vars = vars + (node -> myVars)
 
       if (myVars.args.nonEmpty && myVars.resVars.nonEmpty) {
-        val guesses = Invariant.guessBounds(myVars, z3Solver)
+        val guesses = Invariant.genBounds(myVars, z3Solver)
         bounds = bounds + (node -> guesses)
         println("\nWe attempt to automatically verify " + guesses.size + " bound(s) for method " + node.getName)
       }
@@ -120,7 +120,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         if (DEBUG_VISIT_ASSIGN) println("Visiting assignment in block: " + curBlock.getId)
 
         // GraphUtil.printGraph(myCFG.graph)
-        val invs = Invariant.inferLocalInv(curBlock, myCFG.graph, vars, z3Solver.mkTrue(), true, z3Solver)
+        val invs = Invariant.inferInv(curBlock, myCFG.graph, vars, z3Solver.mkTrue(), z3Solver)
         if (invs.isEmpty) issueWarning(node, "No invariant is inferred!")
 
         if (DEBUG_LOCAL_INV) {
