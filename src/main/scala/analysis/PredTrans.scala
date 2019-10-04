@@ -21,7 +21,7 @@ import scala.collection.immutable.{HashMap, HashSet}
 object PredTrans {
   val DEBUG_SMTLIB = false
   val DEBUG_TRANS_EXPR = false
-  val DEBUG = true
+  val DEBUG = false
   val DEBUG_WLP_LOOP = DEBUG
   val DEBUG_WLP_PROG = DEBUG
   val DEBUG_WLP_BLOCK = false
@@ -143,17 +143,17 @@ object PredTrans {
         val graphpp = GraphUtil.cloneGraph(graphp)
 
         // Remove all nodes that cannot be reached from the root or cannot reach the input node
-        {
-          val nodes = graphpp.vertexSet().asScala
-            .filter(b => !GraphUtil.isReachable(b, exit, graphpp) || !GraphUtil.isReachable(root, b, graphpp))
-          graphpp.removeAllVertices(nodes.asJava)
-        }
+      {
+        val nodes = graphpp.vertexSet().asScala
+          .filter(b => !GraphUtil.isReachable(b, exit, graphpp) || !GraphUtil.isReachable(root, b, graphpp))
+        graphpp.removeAllVertices(nodes.asJava)
+      }
 
         // SCC condensation graph
         val sccCds = GraphUtil.getSCCCondensation(graphpp)
 
         // Topologically sort SCCs
-        val predicates = GraphUtil.reverseTopological(sccCds).foldLeft(new HashMap[Block, BoolExpr])({
+        val sccWlps = GraphUtil.reverseTopological(sccCds).foldLeft(new HashMap[Block, BoolExpr])({
           (acc2, scc) =>
             // Invariant: After each iteration, all root nodes of scc must have been related with a predicate
 
@@ -161,6 +161,7 @@ object PredTrans {
             val nodes = scc.vertexSet().asScala
             if (DEBUG_WLP_PROG) {
               println("\nVisiting SCC: " + nodes.map(b => b.getId))
+              // println(graphpp.vertexSet().asScala.map(b => b.getId).toString())
               println("Does the above SCC has cycle? " + hasCycle)
             }
 
@@ -202,20 +203,21 @@ object PredTrans {
               val wlps = wlpProg(scc, p, loopHead, z3Solver)
 
               // Remove all outgoing edges from loop head
-              val scc_p = GraphUtil.cloneGraph(scc)
-              scc_p.removeAllEdges(scc_p.outgoingEdgesOf(loopHead).asScala.toList.asJava)
+              // val scc_p = GraphUtil.cloneGraph(scc)
+              // scc_p.removeAllEdges(scc_p.outgoingEdgesOf(loopHead).asScala.toList.asJava)
 
-              // Find root nodes in scc_p
+              // Find nodes in scc that have incoming edges from outside scc
               val roots = {
-                val scc_p_roots = scc_p.vertexSet().asScala.filter(b => scc_p.inDegreeOf(b) == 0)
+                /*val scc_p_roots = scc_p.vertexSet().asScala.filter(b => scc_p.inDegreeOf(b) == 0)
                 val scc_roots = scc.vertexSet().asScala.filter(b => scc.inDegreeOf(b) == 0)
                 assert(scc_roots.subsetOf(scc_p_roots))
-                scc_p_roots
+                scc_p_roots*/
+                nodes.filter(b => {
+                  val incomingEdges = graphpp.incomingEdgesOf(b).asScala
+                  assert(incomingEdges.nonEmpty)
+                  incomingEdges.exists(e => !nodes.contains(graphpp.getEdgeSource(e)))
+                })
               }
-                /*nodes.filter(b => {
-                val incomingEdges = graphpp.incomingEdgesOf(b)
-                incomingEdges.isEmpty || incomingEdges.asScala.exists(e => !nodes.contains(scc_.getEdgeSource(e)))
-              })*/
               assert(roots.nonEmpty)
               roots.foldLeft(acc2)({
                 (acc3, root) =>
@@ -242,8 +244,6 @@ object PredTrans {
 
                   if (DEBUG_WLP_PROG) println("Next block is " + nxtBlk.getId + (if (DEBUG_SMTLIB) ": " + nxtBlk else ""))
 
-                  println(acc2.keys.map(b => b.getId))
-                  
                   acc2.get(nxtBlk) match {
                     case Some(p_) =>
                       val wlp = wlpBlock(node, p_, z3Solver)
@@ -305,10 +305,11 @@ object PredTrans {
             }
         })
 
-        predicates.get(root) match {
+        /*predicates.get(root) match {
           case Some(p_) => acc + (root -> p_)
           case None => assert(false, "Root node is " + root.getId); acc
-        }
+        }*/
+        acc ++ sccWlps
     })
   }
 
