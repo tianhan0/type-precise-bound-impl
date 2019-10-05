@@ -4,7 +4,8 @@ import boundchecker.Vars
 import com.microsoft.z3.{BoolExpr, Expr, IntExpr}
 import com.sun.source.tree.MethodTree
 import javax.lang.model.`type`.{TypeKind, TypeMirror}
-import org.checkerframework.dataflow.cfg.block.Block
+import org.checkerframework.dataflow.cfg.block.SpecialBlock.SpecialBlockType
+import org.checkerframework.dataflow.cfg.block.{Block, SpecialBlockImpl}
 import org.checkerframework.javacutil.TreeUtils
 import org.jgrapht.Graph
 import org.jgrapht.graph.DefaultEdge
@@ -27,15 +28,13 @@ object Invariant {
 
   var dp = List[(InvGuess, Set[BoolExpr])]()
 
-  // Return the predicate s.t. if it is valid right after the end of the given block, then it will be valid again next time reaching the end of the given block
   def inferInv(loc: Block,
                graph: Graph[Block, DefaultEdge],
                vars: Vars,
-               ctxPred: BoolExpr, // The predicate abstracting the context under which invariants need to be inferred
                z3Solver: Z3Solver,
                indent: Int = 0): Set[BoolExpr] = {
     val start = System.nanoTime()
-    val invGuess = InvGuess(loc, graph, ctxPred)
+    val invGuess = InvGuess(loc, graph)
     dp.foreach({
       case (invGuessp, inv) =>
         if (invGuessp.equals(invGuess)) {
@@ -56,18 +55,37 @@ object Invariant {
     if (DEBUG_GEN_NEW_INV) println("# of vars: " + allVars.size + "\n# of invs: " + invs.size)
     val validInvs = invs.filter({
       inv =>
-        PredTrans.wlpProg(graph, inv, root, loc, z3Solver).get(root) match {
+        PredTrans.wlpProg(graph, inv, root, loc, vars, z3Solver).get(root) match {
           case Some(wlp) =>
             val implication = z3Solver.mkImplies(z3Solver.mkTrue(), wlp)
-            val res = Invariant.checkForall(implication, allVars, z3Solver)
-            // TODO: Check the validity inside loops
+            val r1 = Invariant.checkForall(implication, allVars, z3Solver)
             // println(root.getId, loc.getId, root == loc, roots.contains(root))
-            if (!res._1) {
+            /*if (!r1._1) {
               println(inv)
-              println(res)
+              println(r1)
               println()
+            }*/
+
+            val newGraph = GraphUtil.cloneGraph(graph)
+            val newRoot = new SpecialBlockImpl(SpecialBlockType.ENTRY)
+            newGraph.addVertex(newRoot)
+            val outEdges = newGraph.outgoingEdgesOf(loc).asScala.toList
+            val succNodes = outEdges.map(e => newGraph.getEdgeTarget(e))
+            succNodes.foreach(n => newGraph.addEdge(newRoot, n))
+            newGraph.removeAllEdges(outEdges.asJava)
+
+            PredTrans.wlpProg(newGraph, inv, newRoot, loc, vars, z3Solver).get(newRoot) match {
+              case Some(wlp2) =>
+                val implication = z3Solver.mkImplies(inv, wlp)
+                val r2 = Invariant.checkForall(implication, allVars, z3Solver)
+                /*if (!r2._1) {
+                  println(inv)
+                  println(r2)
+                  println()
+                }*/
+                r1._1 && r2._1
+              case None => false
             }
-            res._1
           case None => false
         }
     })
@@ -77,11 +95,19 @@ object Invariant {
       println(indentStr + "---Valid invariants are: " + validInvs.foldLeft("\n")((acc, b) => acc + indentStr + "  " + b + "\n"))
     }
 
-    dp = (InvGuess(loc, graph, ctxPred), validInvs) :: dp
+    dp = (InvGuess(loc, graph), validInvs) :: dp
     val end = System.nanoTime()
     TOTAL_TIME += (end - start).toDouble / Utils.NANO
 
     validInvs
+  }
+
+  def inferLoopInv(loopHead: Block,
+                   graph: Graph[Block, DefaultEdge],
+                   vars: Vars,
+                   z3Solver: Z3Solver,
+                   indent: Int = 0): Set[BoolExpr] = {
+    HashSet[BoolExpr](z3Solver.mkTrue()) // TODO: Stronger loop invariant
   }
 
   def getTyp(typ: TypeMirror): TypeKind = {
@@ -249,17 +275,16 @@ object Invariant {
     else z3Solver.mkAnd(invs.toSeq: _*)
   }
 
-  def printTime(): Unit = Utils.printRedString("Local invariant inference's total time is: " + ("%.3f" format TOTAL_TIME) + "s")
+  def printTime(): Unit = Utils.printRedString("Invariant inference's total time is: " + ("%.3f" format TOTAL_TIME) + "s")
 }
 
-case class InvGuess(loc: Block, graph: Graph[Block, DefaultEdge], ctxPred: BoolExpr) {
+case class InvGuess(loc: Block, graph: Graph[Block, DefaultEdge]) {
   override def equals(obj: Any): Boolean = {
     obj match {
       case guess: InvGuess =>
         val r1 = loc == guess.loc
         val r2 = GraphUtil.isSameGraph(graph, guess.graph)
-        val r3 = ctxPred.toString == guess.ctxPred.toString
-        r1 && r2 && r3
+        r1 && r2
       case _ => false
     }
   }

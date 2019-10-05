@@ -120,7 +120,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         if (DEBUG_VISIT_ASSIGN) println("Visiting assignment in block: " + curBlock.getId)
 
         // GraphUtil.printGraph(myCFG.graph)
-        val invs = Invariant.inferInv(curBlock, myCFG.graph, vars, z3Solver.mkTrue(), z3Solver)
+        val invs = Invariant.inferInv(curBlock, myCFG.graph, vars, z3Solver)
         if (invs.isEmpty) issueWarning(node, "No invariant is inferred!")
 
         if (DEBUG_LOCAL_INV) {

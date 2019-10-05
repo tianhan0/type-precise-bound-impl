@@ -1,5 +1,6 @@
 package analysis
 
+import boundchecker.Vars
 import com.microsoft.z3.{BoolExpr, Expr}
 import com.sun.source.tree._
 import javax.lang.model.`type`.{TypeKind, TypeMirror}
@@ -169,6 +170,7 @@ object PredTrans {
               pred: BoolExpr,
               root: Block,
               exit: Block,
+              vars: Vars,
               z3Solver: Z3Solver): Map[Block, BoolExpr] = {
     // Never modify the input graph
     val graphp = GraphUtil.cloneGraph(graph)
@@ -231,7 +233,7 @@ object PredTrans {
 
           // Find loop invariant
           val loopInv = {
-            z3Solver.mkTrue()
+            Invariant.inferLoopInv(loopHead, scc, vars, z3Solver).head
           } // TODO: Stronger loop invariant
 
           // Compute the wlp at loop head
@@ -249,7 +251,7 @@ object PredTrans {
             }
           }
 
-          val p = wlpLoop(scc, loopHead, loopInv, postPred, z3Solver)
+          val p = wlpLoop(scc, loopHead, loopInv, postPred, vars, z3Solver)
 
           // Remove all outgoing edges from loop head
           val scc_p = GraphUtil.cloneGraph(scc)
@@ -272,7 +274,7 @@ object PredTrans {
           roots.foldLeft(acc2)({
             (acc3, root) =>
               // Compute the WLPs inside program scc
-              val wlps = wlpProg(scc, p, root, loopHead, z3Solver)
+              val wlps = wlpProg(scc, p, root, loopHead, vars, z3Solver)
               wlps.get(root) match {
                 case Some(p_) => acc3 + (root -> p_)
                 case None => assert(false, "Root node is " + root.getId); acc3
@@ -364,6 +366,7 @@ object PredTrans {
               loopHead: Block,
               loopInv: BoolExpr,
               pred: BoolExpr,
+              vars: Vars,
               z3Solver: Z3Solver): BoolExpr = {
     assert(loopHead.isInstanceOf[ConditionalBlock], loopHead.toString)
     val headAsCond = loopHead.asInstanceOf[ConditionalBlock]
@@ -402,7 +405,7 @@ object PredTrans {
     newGraph.removeAllEdges(backEdges.asJava)
 
     val loopBodyWlp = {
-      val wlps = wlpProg(newGraph, pred, headAsCond, exitBlk, z3Solver)
+      val wlps = wlpProg(newGraph, pred, headAsCond, exitBlk, vars, z3Solver)
       wlps.get(headAsCond) match {
         case Some(p_) => p_
         case None => assert(false); z3Solver.mkFalse()
