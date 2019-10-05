@@ -6,12 +6,11 @@ package benchmarks.success;
 abstract public class CommandCompleter {
     abstract boolean nonDetInt();
 
-    void complete(int n, int m) {
+    void complete(int n, int m, boolean b) {
         int R1=0;
         int R2=0;
         int i=0;
         int k=0;
-        boolean b = false;
         while (i<n) {
             i=i+1;
             k=k+1;

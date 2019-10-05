@@ -43,7 +43,6 @@ object Invariant {
         }
     })
 
-    val allVars = vars.allVars
     val roots = graph.vertexSet().asScala.filter(b => graph.inDegreeOf(b) == 0)
     assert(roots.size == 1)
     val root = roots.head
@@ -51,6 +50,7 @@ object Invariant {
     val indentStr = " " * indent
     if (DEBUG_LOCAL_INV) println("\n\n\n" + indentStr + "---Infer invariant right after block " + loc.getId + " started:")
 
+    val allVars = vars.allVars
     val invs = genOctagonInv(allVars, z3Solver)
     if (DEBUG_GEN_NEW_INV) println("# of vars: " + allVars.size + "\n# of invs: " + invs.size)
     val validInvs = invs.filter({
@@ -107,6 +107,9 @@ object Invariant {
                    vars: Vars,
                    z3Solver: Z3Solver,
                    indent: Int = 0): Set[BoolExpr] = {
+    val allVars = vars.allVars
+    val invs = genOctagonInv(allVars, z3Solver)
+
     HashSet[BoolExpr](z3Solver.mkTrue()) // TODO: Stronger loop invariant
   }
 

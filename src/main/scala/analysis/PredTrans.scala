@@ -175,8 +175,9 @@ object PredTrans {
     // Never modify the input graph
     val graphp = GraphUtil.cloneGraph(graph)
 
-    // Remove all outgoing edges from the exit node
+    // Remove all outgoing edges from the exit node and incoming edges from the root node
     // Reference: https://github.com/jgrapht/jgrapht/issues/767
+    graphp.removeAllEdges(graphp.incomingEdgesOf(root).asScala.toList.asJava)
     graphp.removeAllEdges(graphp.outgoingEdgesOf(exit).asScala.toList.asJava)
 
     if (DEBUG_WLP_PROG) {
@@ -270,7 +271,7 @@ object PredTrans {
               incomingEdges.exists(e => !nodes.contains(graphp.getEdgeSource(e)))
             })
           }
-          assert(roots.nonEmpty)
+          assert(roots.nonEmpty, scc_p.vertexSet().asScala.map(b => b.getId))
           roots.foldLeft(acc2)({
             (acc3, root) =>
               // Compute the WLPs inside program scc
@@ -373,7 +374,7 @@ object PredTrans {
 
     val loopBlks = loopBody.vertexSet().asScala
     if (DEBUG_WLP_LOOP) {
-      println("\n\n\nInfer WLP before loop " + loopBlks.map(b => b.getId) + " with loop head at block " + headAsCond.getId + " with post-condition " + pred)
+      println("\n\n\n[wlpLoop] Loop: " + loopBlks.map(b => b.getId) + "; Loop head: " + headAsCond.getId + "; PostCond: " + pred)
     }
 
     // Get all assigned variables
