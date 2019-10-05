@@ -242,7 +242,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         assert(vars != null || vars.allVars.isEmpty, "Method " + methodTree.getName.toString + " doesn't have any variables!")
         val (localVars, globalVars) = (vars.locals, vars.args ++ vars.resVars)
 
-        val globals = {
+        val globals: BoolExpr = {
           Utils.printYellowString("\nGlobal invariants are")
           val g = globalInvs.get(methodTree) match {
             case Some(invs) =>
@@ -259,73 +259,67 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
           z3Solver.mkAnd(g, a)
         }
 
-        localInvs.get(methodTree) match {
-          case Some(map) =>
-            // Each subset is a set of local invariants
-            val locals: Iterator[Set[BoolExpr]] = {
-              val locals = map.values.flatten.toSet
-              // Limit the # of local invariants that we use
-              if (locals.size > MAX_NUM_OF_LOCAL_INVS) {
-                Utils.printYellowString("Truncating the # of local invariants from " + locals.size + " into " + MAX_NUM_OF_LOCAL_INVS + "...")
-                locals.slice(0, MAX_NUM_OF_LOCAL_INVS).subsets()
-              }
-              else locals.subsets()
-              // Utils.power(locals)
-              // Error "java.lang.NoClassDefFoundError: scala/collection/SetLike$$anon$1" is caused by invoking
-              // XXX.subset(). The error is fixed by implementing power set generation
-              // References:
-              // https://github.com/ztellman/aleph/issues/320#issuecomment-304113405
-              // https://stackoverflow.com/questions/11351633/java-scala-shutdown-hook-noclassdeffounderror
-            }
+        // Necessary because we did not check the base case of global invariants
+        val validGlobals = {
+          val exist = {
+            if (vars.args.isEmpty) globals
+            else z3Solver.mkExists(vars.args.toArray, globals)
+          }
+          val res = z3Solver.checkSAT(exist)
+          res
+        }
 
-            val exists = {
-              locals.foldLeft(new HashSet[Expr])({
-                (acc, subset) =>
-                  val l = Invariant.getConjunction(subset, z3Solver)
+        if (!validGlobals) {
+          Utils.printYellowString("There does not exist an initial program state that " +
+            "satisfies the above global invariants. Bound verification is skipped...")
+        }
+        else {
+          localInvs.get(methodTree) match {
+            case Some(invs) =>
+              val locals: Traversable[Traversable[BoolExpr]] = Utils.crossJoin(invs.values.toList)
+              val toChecks = locals.map({
+                local =>
+                  val l = Invariant.getConjunction(local.toList, z3Solver)
                   val body = z3Solver.mkAnd(l, globals)
                   val exist = {
                     if (localVars.isEmpty) body
                     else z3Solver.mkExists(localVars.toArray, body)
                   }
-                  val res = z3Solver.checkSAT(exist) // TODO: Necessary because we did not check the base case of global invariants
-                  if (res) acc + exist
-                  else {
-                    acc
-                  }
+                  (exist, local)
               })
-            }
 
-            val (success: Set[Expr], failure: Set[Expr]) = bounds1.foldLeft((HashSet[Expr](), HashSet[Expr]()))({
-              (acc3, bound) =>
-                exists.foldLeft(acc3)({
-                  (acc4, exist) =>
-                    // We check a new assertion only if all previous checks failed
-                    // if (acc4._1.isEmpty) {
-                    val toCheck = {
-                      z3Solver.mkForall(
-                        globalVars.toArray,
-                        // We should use `implication` here (instead of `and`), because we don't expect all inputs
-                        // to satisfy both invariants and bounds. We only care if those program states that
-                        // satisfy invariants also satisfy bounds
-                        z3Solver.mkImplies(exist, bound)
-                      )
-                    }
+              val (success: Set[Expr], failure: Set[Expr]) = bounds1.foldLeft((HashSet[Expr](), HashSet[Expr]()))({
+                (acc3, bound) =>
+                  toChecks.foldLeft(acc3)({
+                    (acc4, toCheck) =>
+                      // We check a new assertion only if all previous bound verification failed
+                      if (acc4._1.isEmpty) {
+                        val assertion = {
+                          z3Solver.mkForall(
+                            globalVars.toArray,
+                            // We should use `implication` here (instead of `and`), because we don't expect all inputs
+                            // to satisfy both invariants and bounds. We only care if those program states that
+                            // satisfy invariants also satisfy bounds
+                            z3Solver.mkImplies(toCheck._1, bound)
+                          )
+                        }
 
-                    val res = z3Solver.checkSAT(toCheck)
-                    if (DEBUG_VERIFICATION) println("\n" + res + "\n" + toCheck.toString)
-                    if (res) (acc4._1 + bound, acc4._2)
-                    else (acc4._1, acc4._2 + bound)
-                  // }
-                  // else acc4
-                })
-            })
+                        val res = z3Solver.checkSAT(assertion)
+                        if (DEBUG_VERIFICATION) println("\n" + res + "\n" + assertion.toString)
+                        if (res) (acc4._1 + bound, acc4._2)
+                        else (acc4._1, acc4._2 + bound)
+                      }
+                      else acc4
+                  })
+              })
 
-            if (bounds1.nonEmpty) {
-              val bndRes = BndResult(methodTree, success, failure)
-              bndRes.printResults()
-              results = results + bndRes
-            }
-          case None =>
+              if (bounds1.nonEmpty) {
+                val bndRes = BndResult(methodTree, success, failure)
+                bndRes.printResults()
+                results = results + bndRes
+              }
+            case None =>
+          }
         }
     })
   }

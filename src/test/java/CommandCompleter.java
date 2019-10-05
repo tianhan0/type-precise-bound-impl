@@ -1,4 +1,4 @@
-package benchmarks.success;
+package benchmarks;
 
 /**
  * @author Tianhan Lu
