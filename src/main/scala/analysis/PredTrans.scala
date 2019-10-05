@@ -119,6 +119,7 @@ object PredTrans {
   // Compute the weakest pre-condition of the given predicate (which is the post-condition at the exit node) before the program's entry points
   def wlpProg(graph: Graph[Block, DefaultEdge],
               pred: BoolExpr,
+              root: Block,
               exit: Block,
               z3Solver: Z3Solver): Map[Block, BoolExpr] = {
     // Never modify the input graph
@@ -128,189 +129,188 @@ object PredTrans {
     // Reference: https://github.com/jgrapht/jgrapht/issues/767
     graphp.removeAllEdges(graphp.outgoingEdgesOf(exit).asScala.toList.asJava)
 
-    // Find all root nodes
-    val roots = graphp.vertexSet().asScala.filter(b => graphp.inDegreeOf(b) == 0)
     if (DEBUG_WLP_PROG) {
-      println("\n\n\nInfer WLP before root blocks " + roots.map(b => b.getId) + " in program " + graphp.vertexSet().asScala.map(b => b.getId) + " with post-condition " + pred + " at exit block " + exit.getId)
+      println("\n\n\n[wlpProg] Root: " + root.getId + "; Exit: " + exit.getId + "; PostCond: " + pred + "; Program: " + graphp.vertexSet().asScala.map(b => b.getId))
     }
 
-    roots.foldLeft(new HashMap[Block, BoolExpr])({
-      (acc, root) =>
+    // Remove all nodes that cannot reach the exit node or cannot be reached from the root node
+    {
+      val nodes = graphp.vertexSet().asScala
+        .filter(b => !GraphUtil.isReachable(b, exit, graphp) || !GraphUtil.isReachable(root, b, graphp))
+      graphp.removeAllVertices(nodes.asJava)
+    }
+
+    // SCC condensation graph
+    val sccCds = GraphUtil.getSCCCondensation(graphp)
+    // Topologically sort SCCs
+    val revSCCs = GraphUtil.reverseTopological(sccCds)
+
+    val sccWlps = revSCCs.foldLeft(new HashMap[Block, BoolExpr])({
+      (acc2, scc) =>
+        // Invariant: After each iteration, all root nodes of scc must have been related with a predicate
+
+        val hasCycle = GraphUtil.hasCycle(scc)
+        val nodes = scc.vertexSet().asScala
         if (DEBUG_WLP_PROG) {
-          println("\n\nVisiting root: " + root.getId)
+          println("\nVisiting SCC: " + nodes.map(b => b.getId))
+          // println(graphp.vertexSet().asScala.map(b => b.getId).toString())
+          println("Does the above SCC has cycle? " + hasCycle)
         }
-        // Create yet another new graph
-        val graphpp = GraphUtil.cloneGraph(graphp)
 
-        // Remove all nodes that cannot be reached from the root or cannot reach the input node
-      {
-        val nodes = graphpp.vertexSet().asScala
-          .filter(b => !GraphUtil.isReachable(b, exit, graphpp) || !GraphUtil.isReachable(root, b, graphpp))
-        graphpp.removeAllVertices(nodes.asJava)
-      }
+        if (hasCycle) {
+          // Find the loop head
+          val loopHead = {
+            val loopHeads = nodes.filter({
+              node =>
+                val outgoingEdges = graphp.outgoingEdgesOf(node).asScala
+                val tgtNodesOutSCC =
+                  outgoingEdges
+                    .filter(e => !scc.containsVertex(graphp.getEdgeTarget(e)))
+                    .map(e => graphp.getEdgeTarget(e))
+                val numOfInSCC = outgoingEdges.size - tgtNodesOutSCC.size
+                if (numOfInSCC == 1 && tgtNodesOutSCC.size == 1) {
+                  val tgtNode = tgtNodesOutSCC.head
+                  val nxtSCCs = sccCds.vertexSet().asScala.filter(g => g.vertexSet().asScala.contains(tgtNode))
+                  assert(nxtSCCs.size == 1)
+                  val nxtSCC = nxtSCCs.head
+                  revSCCs.indexOf(nxtSCC) < revSCCs.indexOf(scc)
+                }
+                else false
+            })
+            assert(loopHeads.size == 1, loopHeads.map(b => b.getId))
+            loopHeads.head
+          }
 
-        // SCC condensation graph
-        val sccCds = GraphUtil.getSCCCondensation(graphpp)
+          // Find loop invariant
+          val loopInv = {
+            z3Solver.mkTrue()
+          } // TODO: Stronger loop invariant
 
-        // Topologically sort SCCs
-        val sccWlps = GraphUtil.reverseTopological(sccCds).foldLeft(new HashMap[Block, BoolExpr])({
-          (acc2, scc) =>
-            // Invariant: After each iteration, all root nodes of scc must have been related with a predicate
-
-            val hasCycle = GraphUtil.hasCycle(scc)
-            val nodes = scc.vertexSet().asScala
-            if (DEBUG_WLP_PROG) {
-              println("\nVisiting SCC: " + nodes.map(b => b.getId))
-              // println(graphpp.vertexSet().asScala.map(b => b.getId).toString())
-              println("Does the above SCC has cycle? " + hasCycle)
+          // Compute the wlp at loop head
+          val postPred = {
+            val outgoingEdges = graphp.outgoingEdgesOf(loopHead).asScala
+            val tgtNodes = outgoingEdges.map(e => graphp.getEdgeTarget(e))
+            val outsideBlk = {
+              val outSideBlk = tgtNodes.filter(b => !scc.containsVertex(b))
+              assert(outSideBlk.size == 1)
+              outSideBlk.head
             }
+            acc2.get(outsideBlk) match {
+              case Some(p_) => p_
+              case None => assert(false, "Outside block is " + outsideBlk.getId); z3Solver.mkFalse()
+            }
+          }
 
-            if (hasCycle) {
-              // Find loop head
-              val loopHead = {
-                val loopHeads = nodes.filter({
-                  node =>
-                    val outgoingEdges = graphpp.outgoingEdgesOf(node).asScala
-                    val numOfOutsideSCC = outgoingEdges.count(e => !scc.containsVertex(graphpp.getEdgeTarget(e)))
-                    val numOfInsideSCC = outgoingEdges.count(e => scc.containsVertex(graphpp.getEdgeTarget(e)))
-                    numOfInsideSCC == 1 && numOfOutsideSCC == 1
-                })
-                assert(loopHeads.size == 1, loopHeads.map(b => b.getId))
-                loopHeads.head
-              }
+          val p = wlpLoop(scc, loopHead, loopInv, postPred, z3Solver)
 
-              // Find loop invariant
-              val loopInv = z3Solver.mkTrue() // TODO
+          // Remove all outgoing edges from loop head
+          val scc_p = GraphUtil.cloneGraph(scc)
+          scc_p.removeAllEdges(scc_p.outgoingEdgesOf(loopHead).asScala.toList.asJava)
 
-              // Compute the wlp at loop head
-              val postPred = {
-                val outgoingEdges = graphpp.outgoingEdgesOf(loopHead).asScala
-                val tgtNodes = outgoingEdges.map(e => graphpp.getEdgeTarget(e))
-                val outsideBlk = {
-                  val outSideBlk = tgtNodes.filter(b => !scc.containsVertex(b))
-                  assert(outSideBlk.size == 1)
-                  outSideBlk.head
-                }
-                acc2.get(outsideBlk) match {
-                  case Some(p_) => p_
-                  case None => assert(false, "Outside block is " + outsideBlk.getId); z3Solver.mkFalse()
-                }
-              }
-
-              val p = wlpLoop(scc, loopHead, loopInv, postPred, z3Solver)
-
+          // Find nodes in scc_p that have incoming edges from outside scc_p
+          val roots = {
+            /*val scc_p_roots = scc_p.vertexSet().asScala.filter(b => scc_p.inDegreeOf(b) == 0)
+            val scc_roots = scc.vertexSet().asScala.filter(b => scc.inDegreeOf(b) == 0)
+            assert(scc_roots.subsetOf(scc_p_roots))
+            scc_p_roots*/
+            val nodes = scc_p.vertexSet().asScala
+            nodes.filter(b => {
+              val incomingEdges = graphp.incomingEdgesOf(b).asScala
+              assert(incomingEdges.nonEmpty)
+              incomingEdges.exists(e => !nodes.contains(graphp.getEdgeSource(e)))
+            })
+          }
+          assert(roots.nonEmpty)
+          roots.foldLeft(acc2)({
+            (acc3, root) =>
               // Compute the WLPs inside program scc
-              val wlps = wlpProg(scc, p, loopHead, z3Solver)
-
-              // Remove all outgoing edges from loop head
-              // val scc_p = GraphUtil.cloneGraph(scc)
-              // scc_p.removeAllEdges(scc_p.outgoingEdgesOf(loopHead).asScala.toList.asJava)
-
-              // Find nodes in scc that have incoming edges from outside scc
-              val roots = {
-                /*val scc_p_roots = scc_p.vertexSet().asScala.filter(b => scc_p.inDegreeOf(b) == 0)
-                val scc_roots = scc.vertexSet().asScala.filter(b => scc.inDegreeOf(b) == 0)
-                assert(scc_roots.subsetOf(scc_p_roots))
-                scc_p_roots*/
-                nodes.filter(b => {
-                  val incomingEdges = graphpp.incomingEdgesOf(b).asScala
-                  assert(incomingEdges.nonEmpty)
-                  incomingEdges.exists(e => !nodes.contains(graphpp.getEdgeSource(e)))
-                })
+              val wlps = wlpProg(scc, p, root, loopHead, z3Solver)
+              wlps.get(root) match {
+                case Some(p_) => acc3 + (root -> p_)
+                case None => assert(false, "Root node is " + root.getId); acc3
               }
-              assert(roots.nonEmpty)
-              roots.foldLeft(acc2)({
-                (acc3, root) =>
-                  wlps.get(root) match {
-                    case Some(p_) => acc3 + (root -> p_)
-                    case None => assert(false, "Root node is " + root.getId); acc3
-                  }
-              })
-            }
-            else {
-              assert(nodes.size == 1)
-              val node = nodes.head
-              val outgoingEdges = sccCds.outgoingEdgesOf(scc).asScala
-              outgoingEdges.size match {
-                case 0 => acc2 + (node -> pred)
-                case 1 =>
-                  val nxtSCC = sccCds.getEdgeTarget(outgoingEdges.head)
-                  val nxtBlk = {
-                    val nxtBlks = graphpp.outgoingEdgesOf(node).asScala.map(e => graphpp.getEdgeTarget(e))
-                    assert(nxtBlks.size == 1, nxtBlks.map(b => b.getId))
-                    assert(nxtSCC.vertexSet().asScala.contains(nxtBlks.head))
-                    nxtBlks.head
-                  }
-
-                  if (DEBUG_WLP_PROG) println("Next block is " + nxtBlk.getId + (if (DEBUG_SMTLIB) ": " + nxtBlk else ""))
-
-                  acc2.get(nxtBlk) match {
-                    case Some(p_) =>
-                      val wlp = wlpBlock(node, p_, z3Solver)
-                      node match {
-                        case node_p: ConditionalBlock =>
-                          // If node is a branching w/ one successor outside of scc,
-                          // we strengthen the wlp with the conditional
-                          val cond = getBranchCond(node_p, graphpp, z3Solver)
-                          val tgtNodes = graphpp.outgoingEdgesOf(node_p).asScala
-                            .map(e => graphpp.getEdgeSource(e))
-                            .filter(n => scc.containsVertex(n))
-                          assert(tgtNodes.size == 1)
-                          val cond_p = if (tgtNodes.head == node_p.getThenSuccessor) cond else z3Solver.mkNot(cond)
-                          acc2 + (node -> z3Solver.mkAnd(cond_p, wlp))
-                        case _ => acc2 + (node -> wlp)
-                      }
-                    case None => assert(false, "Next block is " + nxtBlk.getId); acc2
-                  }
-                case 2 =>
-                  val cond = getBranchCond(node.asInstanceOf[ConditionalBlock], graphpp, z3Solver)
-
-                  val (thenNode, elseNode) = {
-                    val blkOutgoingEdges = graphpp.outgoingEdgesOf(node).asScala
-                    val n1 = graphpp.getEdgeTarget(blkOutgoingEdges.head)
-                    val n2 = graphpp.getEdgeTarget(blkOutgoingEdges.tail.head)
-
-                    assert(node.isInstanceOf[ConditionalBlock])
-                    val asCondBlk = node.asInstanceOf[ConditionalBlock]
-                    val twoSCCs = outgoingEdges.map(edge => sccCds.getEdgeTarget(edge))
-                    val headSCC = twoSCCs.head
-                    val headIsThen = headSCC.vertexSet().contains(asCondBlk.getThenSuccessor)
-                    val headIsElse = headSCC.vertexSet().contains(asCondBlk.getElseSuccessor)
-                    if (headIsThen) {
-                      assert(!headIsElse)
-                      (n1, n2)
-                    }
-                    else {
-                      assert(!headIsThen)
-                      (n2, n1)
-                    }
-                  }
-
-                  if (DEBUG_WLP_PROG) {
-                    println("Then Node: " + thenNode.getId)
-                    println("Else Node: " + elseNode.getId)
-                  }
-
-                  (acc2.get(thenNode), acc2.get(elseNode)) match {
-                    case (Some(p1), Some(p2)) =>
-                      val wlp = z3Solver.mkAnd(
-                        z3Solver.mkImplies(cond, p1),
-                        z3Solver.mkImplies(z3Solver.mkNot(cond), p2)
-                      )
-                      acc2 + (node -> wlp)
-                    case _ => assert(false, "Then node is " + thenNode.getId + ". Else node is " + elseNode.getId); acc2
-                  }
-                case x@_ => assert(false, "# of outgoing edges is " + x); acc2
+          })
+        }
+        else {
+          assert(nodes.size == 1)
+          val node = nodes.head
+          val outgoingEdges = sccCds.outgoingEdgesOf(scc).asScala
+          outgoingEdges.size match {
+            case 0 => acc2 + (node -> pred)
+            case 1 =>
+              val nxtSCC = sccCds.getEdgeTarget(outgoingEdges.head)
+              val nxtBlk = {
+                val nxtBlks = graphp.outgoingEdgesOf(node).asScala.map(e => graphp.getEdgeTarget(e))
+                assert(nxtBlks.size == 1, nxtBlks.map(b => b.getId))
+                assert(nxtSCC.vertexSet().asScala.contains(nxtBlks.head))
+                nxtBlks.head
               }
-            }
-        })
 
-        /*predicates.get(root) match {
-          case Some(p_) => acc + (root -> p_)
-          case None => assert(false, "Root node is " + root.getId); acc
-        }*/
-        acc ++ sccWlps
+              if (DEBUG_WLP_PROG) println("Next block is " + nxtBlk.getId + (if (DEBUG_SMTLIB) ": " + nxtBlk else ""))
+
+              acc2.get(nxtBlk) match {
+                case Some(p_) =>
+                  val wlp = wlpBlock(node, p_, z3Solver)
+                  node match {
+                    case node_p: ConditionalBlock =>
+                      // If node is a branching w/ one successor outside of scc,
+                      // then strengthen the wlp with the conditional
+                      val cond = getBranchCond(node_p, graphp, z3Solver)
+                      val tgtNodes =
+                        graphp.outgoingEdgesOf(node_p).asScala
+                          .map(e => graphp.getEdgeSource(e))
+                          .filter(n => scc.containsVertex(n))
+                      assert(tgtNodes.size == 1)
+                      val cond_p = if (tgtNodes.head == node_p.getThenSuccessor) cond else z3Solver.mkNot(cond)
+                      acc2 + (node -> z3Solver.mkImplies(cond_p, wlp))
+                    case _ => acc2 + (node -> wlp)
+                  }
+                case None => assert(false, "Next block is " + nxtBlk.getId); acc2
+              }
+            case 2 =>
+              assert(node.isInstanceOf[ConditionalBlock])
+              val asCondBlk = node.asInstanceOf[ConditionalBlock]
+              val cond = getBranchCond(asCondBlk, graphp, z3Solver)
+
+              val (thenNode, elseNode) = {
+                val blkOutgoingEdges = graphp.outgoingEdgesOf(node).asScala
+                val n1 = graphp.getEdgeTarget(blkOutgoingEdges.head)
+                val n2 = graphp.getEdgeTarget(blkOutgoingEdges.tail.head)
+
+                val twoSCCs = outgoingEdges.map(edge => sccCds.getEdgeTarget(edge))
+                val headSCC = twoSCCs.head
+                val headIsThen = headSCC.vertexSet().contains(asCondBlk.getThenSuccessor)
+                val headIsElse = headSCC.vertexSet().contains(asCondBlk.getElseSuccessor)
+                if (headIsThen) {
+                  assert(!headIsElse)
+                  (n1, n2)
+                }
+                else {
+                  assert(!headIsThen)
+                  (n2, n1)
+                }
+              }
+
+              if (DEBUG_WLP_PROG) {
+                println("Then Node: " + thenNode.getId)
+                println("Else Node: " + elseNode.getId)
+              }
+
+              (acc2.get(thenNode), acc2.get(elseNode)) match {
+                case (Some(p1), Some(p2)) =>
+                  val wlp = z3Solver.mkAnd(
+                    z3Solver.mkImplies(cond, p1),
+                    z3Solver.mkImplies(z3Solver.mkNot(cond), p2)
+                  )
+                  acc2 + (node -> wlp)
+                case _ => assert(false, "Then node is " + thenNode.getId + ". Else node is " + elseNode.getId); acc2
+              }
+            case x@_ => assert(false, "# of outgoing edges is " + x); acc2
+          }
+        }
     })
+
+    sccWlps
   }
 
   def wlpLoop(loopBody: Graph[Block, DefaultEdge],
@@ -355,7 +355,7 @@ object PredTrans {
     newGraph.removeAllEdges(backEdges.asJava)
 
     val loopBodyWlp = {
-      val wlps = wlpProg(newGraph, pred, exitBlk, z3Solver)
+      val wlps = wlpProg(newGraph, pred, loopHead, exitBlk, z3Solver)
       wlps.get(loopHead) match {
         case Some(p_) => p_
         case None => assert(false); z3Solver.mkFalse()
@@ -422,7 +422,12 @@ object PredTrans {
       case reg: RegularBlock =>
         reg.getContents.asScala.last.getTree match {
           case expTree: ExpressionTree => transExpr(expTree, z3Solver).asInstanceOf[BoolExpr]
-          case x@_ => assert(false, "Unexpected loop conditional: " + x.toString); z3Solver.mkTrue()
+          case x@_ =>
+            if (x.toString.contains("assertionsEnabled")) z3Solver.mkTrue()
+            else {
+              assert(false, "Unexpected loop conditional: " + x.toString)
+              z3Solver.mkTrue()
+            }
         }
       /*case exp: ExceptionBlock =>
         val incomingEdges2 = graph.incomingEdgesOf(exp).asScala

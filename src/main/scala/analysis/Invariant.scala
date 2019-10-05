@@ -45,6 +45,9 @@ object Invariant {
     })
 
     val allVars = vars.allVars
+    val roots = graph.vertexSet().asScala.filter(b => graph.inDegreeOf(b) == 0)
+    assert(roots.size == 1)
+    val root = roots.head
 
     val indentStr = " " * indent
     if (DEBUG_LOCAL_INV) println("\n\n\n" + indentStr + "---Infer invariant right after block " + loc.getId + " started:")
@@ -53,13 +56,21 @@ object Invariant {
     if (DEBUG_GEN_NEW_INV) println("# of vars: " + allVars.size + "\n# of invs: " + invs.size)
     val validInvs = invs.filter({
       inv =>
-        val wlps = PredTrans.wlpProg(graph, inv, loc, z3Solver)
-        wlps.forall({
-          case (root, wlp) =>
-            val implication = if (root == loc) z3Solver.mkImplies(inv, wlp) else z3Solver.mkImplies(z3Solver.mkTrue(), wlp)
+        val wlps = PredTrans.wlpProg(graph, inv, root, loc, z3Solver)
+        wlps.get(root) match {
+          case Some(wlp) =>
+            val implication = {
+              if (root == loc) z3Solver.mkImplies(inv, wlp)
+              else if (roots.contains(root)) z3Solver.mkImplies(z3Solver.mkTrue(), wlp)
+              else z3Solver.mkTrue()
+            }
             val res = Invariant.checkForall(implication, allVars, z3Solver)
+            // TODO: Check the validity inside loops
+            // println(root.getId, loc.getId, root == loc, roots.contains(root))
+            // if (!res._1) println(res)
             res._1
-        })
+          case None => false
+        }
     })
 
     if (DEBUG_LOCAL_INV) {
@@ -222,7 +233,7 @@ object Invariant {
     Vars(localVars, args, resVars)
   }
 
-  // Return true if the assertion is valid
+  // Return true iff. the assertion is valid
   def checkForall(assertion: BoolExpr, allVars: Set[Expr], z3Solver: Z3Solver): (Boolean, BoolExpr) = {
     val toCheck = {
       z3Solver.mkNot(

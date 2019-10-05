@@ -243,12 +243,17 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         val (localVars, globalVars) = (vars.locals, vars.args ++ vars.resVars)
 
         val globals = {
+          Utils.printYellowString("\nGlobal invariants are")
           val g = globalInvs.get(methodTree) match {
-            case Some(invs) => Invariant.getConjunction(invs, z3Solver)
+            case Some(invs) =>
+              invs.foreach(inv => Utils.printBlueString(inv))
+              Invariant.getConjunction(invs, z3Solver)
             case None => z3Solver.mkTrue()
           }
           val a = assumptions.get(methodTree) match {
-            case Some(invs) => Invariant.getConjunction(invs, z3Solver)
+            case Some(invs) =>
+              invs.foreach(inv => Utils.printBlueString(inv))
+              Invariant.getConjunction(invs, z3Solver)
             case None => z3Solver.mkTrue()
           }
           z3Solver.mkAnd(g, a)
@@ -300,7 +305,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
                     if (localVars.isEmpty) body
                     else z3Solver.mkExists(localVars.toArray, body)
                   }
-                  val res = z3Solver.checkSAT(exist)
+                  val res = z3Solver.checkSAT(exist) // TODO: Necessary because we did not check the base case of global invariants
                   if (res) acc + exist
                   else {
                     acc
