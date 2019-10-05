@@ -52,6 +52,8 @@ object Invariant {
 
     val allVars = vars.allVars
     val invs = genOctagonInv(allVars, z3Solver)
+    // TODO: Generate arbitrary conjunction of the above invariants
+
     if (DEBUG_GEN_NEW_INV) println("# of vars: " + allVars.size + "\n# of invs: " + invs.size)
     val validInvs = invs.filter({
       inv =>
@@ -76,7 +78,7 @@ object Invariant {
 
             PredTrans.wlpProg(newGraph, inv, newRoot, loc, vars, z3Solver).get(newRoot) match {
               case Some(wlp2) =>
-                val implication = z3Solver.mkImplies(inv, wlp)
+                val implication = z3Solver.mkImplies(inv, wlp2)
                 val r2 = Invariant.checkForall(implication, allVars, z3Solver)
                 /*if (!r2._1) {
                   println(inv)
