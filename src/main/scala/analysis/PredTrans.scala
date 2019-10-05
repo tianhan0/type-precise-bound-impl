@@ -109,8 +109,9 @@ object PredTrans {
         val expr = transExpr(assignmentTree.getExpression, z3Solver)
         pred.substitute(x, expr).asInstanceOf[BoolExpr]
 
-      case assertTree: AssertTree =>
-        z3Solver.mkImplies(transExpr(assertTree.getCondition, z3Solver), pred)
+      case assertTree: AssertTree => // TODO: Nothing happens here
+        // z3Solver.mkImplies(transExpr(assertTree.getCondition, z3Solver), pred)
+        pred
 
       case expressionTree: ExpressionTree => pred
       /*val shouldVisit = isTopLevelStmt(node)

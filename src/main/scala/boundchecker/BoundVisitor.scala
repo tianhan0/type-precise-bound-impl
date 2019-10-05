@@ -92,6 +92,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
         ex.getStackTrace.slice(0, 3).foreach(e => println(e))
       // ex.printStackTrace()
     }
+
     super.visitMethod(node, p)
 
     checkBound(node)
@@ -161,12 +162,14 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
       val expr = PredTrans.transExpr(node.getCondition, z3solver).asInstanceOf[BoolExpr]
 
       if (node.getDetail.toString == "\"" + Utils.BOUND_STR + "\"") {
+        Utils.printYellowString("Collected a bound to verify: " + expr + "\n")
         bounds.get(enclosingMethod) match {
           case Some(set) => bounds = bounds + (enclosingMethod -> (set + expr))
           case None => bounds = bounds + (enclosingMethod -> HashSet(expr))
         }
       }
       else if (node.getDetail.toString == "\"" + Utils.GLOBAL_STR + "\"") {
+        Utils.printYellowString("Collected a global invariant: " + expr + "\n")
         assumptions.get(enclosingMethod) match {
           case Some(set) => assumptions = assumptions + (enclosingMethod -> (set + expr))
           case None => assumptions = assumptions + (enclosingMethod -> HashSet(expr))
@@ -233,7 +236,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
     if (this.bounds.nonEmpty) println("===============================================\nBound verification starts for method " + node.getName.toString + "...")
 
     this.bounds.filter(m => m._1 == node).foreach({
-      case (methodTree, bounds1) =>
+      case (methodTree, bndsToCheck) =>
         val z3Solver = solvers.getOrElse(methodTree, new Z3Solver)
         val myCFG: MyCFG = cfgs.getOrElse(methodTree, null)
         assert(myCFG != null)
@@ -277,7 +280,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
           localInvs.get(methodTree) match {
             case Some(invs) =>
               val locals: Traversable[Traversable[BoolExpr]] = Utils.crossJoin(invs.values.toList)
-              val toChecks = locals.map({
+              val preds = locals.map({
                 local =>
                   val l = Invariant.getConjunction(local.toList, z3Solver)
                   val body = z3Solver.mkAnd(l, globals)
@@ -288,33 +291,40 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
                   (exist, local)
               })
 
-              val (success: Set[Expr], failure: Set[Expr]) = bounds1.foldLeft((HashSet[Expr](), HashSet[Expr]()))({
-                (acc3, bound) =>
-                  toChecks.foldLeft(acc3)({
-                    (acc4, toCheck) =>
-                      // We check a new assertion only if all previous bound verification failed
-                      if (acc4._1.isEmpty) {
-                        val assertion = {
-                          z3Solver.mkForall(
-                            globalVars.toArray,
-                            // We should use `implication` here (instead of `and`), because we don't expect all inputs
-                            // to satisfy both invariants and bounds. We only care if those program states that
-                            // satisfy invariants also satisfy bounds
-                            z3Solver.mkImplies(toCheck._1, bound)
-                          )
-                        }
-
-                        val res = z3Solver.checkSAT(assertion)
-                        if (DEBUG_VERIFICATION) println("\n" + res + "\n" + assertion.toString)
-                        if (res) (acc4._1 + bound, acc4._2)
-                        else (acc4._1, acc4._2 + bound)
+              val bnds = bndsToCheck.map({
+                bndToCheck =>
+                  val helpfulPreds = preds.find({
+                    pred =>
+                      val assertion = {
+                        z3Solver.mkForall(
+                          globalVars.toArray,
+                          // We should use `implication` here (instead of `and`), because we don't expect all inputs
+                          // to satisfy both invariants and bounds. We only care if those program states that
+                          // satisfy invariants also satisfy bounds
+                          z3Solver.mkImplies(pred._1, bndToCheck)
+                        )
                       }
-                      else acc4
+
+                      val res = z3Solver.checkSAT(assertion)
+                      if (DEBUG_VERIFICATION) println("\n" + res + "\n" + assertion.toString)
+                      res
                   })
+                  helpfulPreds match {
+                    case Some(v) => BndInfo(bndToCheck, Some(v._2))
+                    case None => BndInfo(bndToCheck, None)
+                  }
               })
 
-              if (bounds1.nonEmpty) {
-                val bndRes = BndResult(methodTree, success, failure)
+              val (verifiedBnds, unverifiedBnds) = bnds.foldLeft((HashSet[BndInfo](), HashSet[BndInfo]()))({
+                (acc, bndInfo) =>
+                  bndInfo.pred match {
+                    case Some(v) => (acc._1 + bndInfo, acc._2)
+                    case None => (acc._1, acc._2 + bndInfo)
+                  }
+              })
+
+              if (bndsToCheck.nonEmpty) {
+                val bndRes = BndResult(methodTree, verifiedBnds, unverifiedBnds)
                 bndRes.printResults()
                 results = results + bndRes
               }
@@ -329,18 +339,25 @@ case class Vars(locals: Set[Expr], args: Set[Expr], resVars: Set[Expr]) {
   val allVars: Set[Expr] = locals ++ args ++ resVars
 }
 
-case class BndResult(methodTree: MethodTree, success: Set[Expr], failure: Set[Expr]) {
+case class BndInfo(bound: Expr, pred: Option[Traversable[BoolExpr]])
+
+case class BndResult(methodTree: MethodTree, success: Set[BndInfo], failure: Set[BndInfo]) {
   val isSuccessful: Boolean = success.nonEmpty
 
   def printResults(): Unit = {
     val methodName = methodTree.getName.toString
     println("\nResults for method " + methodName)
     if (success.nonEmpty) {
-      success.foreach(bound => Utils.printGreenString("[success] Bound " + bound.toString + " for method " + methodName + " is verified"))
+      success.foreach(bndInfo => {
+        Utils.printGreenString("[success] Bound " + bndInfo.bound.toString + " for method " + methodName + " is verified with the help of the following invariants")
+        bndInfo.pred match {
+          case Some(pred) =>
+            pred.foreach(b => println(b))
+            println()
+          case None => assert(false)
+        }
+      })
     }
-    else if (success.isEmpty) {
-      assert(failure.nonEmpty)
-      failure.foreach(bound => Utils.printRedString("[failure] Bound " + bound.toString + " for method " + methodName + " is not verified"))
-    }
+    failure.foreach(bndInfo => Utils.printRedString("[failure] Bound " + bndInfo.bound.toString + " for method " + methodName + " is not verified"))
   }
 }
