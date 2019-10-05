@@ -67,7 +67,7 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
       cfgs += node -> myCFG
 
       if (node.getName.toString != "<init>") {
-        // GraphUtil.printCFGtoPDF(cfg, Utils.OUTPUT_DIR)
+        GraphUtil.printCFGtoPDF(cfg, Utils.OUTPUT_DIR)
         GraphUtil.printGraphtoPDF(myCFG.graph, Utils.OUTPUT_DIR + Utils.SEPARATOR + classTree.getSimpleName + "_" + node.getName.toString)
       }
 
@@ -263,24 +263,6 @@ class BoundVisitor(checker: BaseTypeChecker) extends BaseTypeVisitor[BaseAnnotat
           case Some(map) =>
             // Each subset is a set of local invariants
             val locals: Iterator[Set[BoolExpr]] = {
-              /*val locals = map.foldLeft(new HashSet[BoolExpr])({
-                case (acc, (node: Tree, locals: Set[BoolExpr])) =>
-                  val localsCompatibleWithGlobals = locals.filter({
-                    local =>
-                      val forall = {
-
-                        val body = z3Solver.mkImplies(globals, local)
-                        // Check if there exists an assignment to all variables such that the conjunction of the current
-                        // local invariant and global invariants are SAT, because the verified local invariants
-                        // may contradict global invariants (i.e. there exists no state that both satisfy
-                        // local and global invariants), in which case we will have `false=>anything`.
-                        z3Solver.mkForall(vars.allVars.toArray, body) // TODO: all variables or global variables or ???
-                      }
-                      val res = z3Solver.checkSAT(forall)
-                      res
-                  })
-                  acc ++ localsCompatibleWithGlobals
-              })*/
               val locals = map.values.flatten.toSet
               // Limit the # of local invariants that we use
               if (locals.size > MAX_NUM_OF_LOCAL_INVS) {

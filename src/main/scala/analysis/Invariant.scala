@@ -56,18 +56,17 @@ object Invariant {
     if (DEBUG_GEN_NEW_INV) println("# of vars: " + allVars.size + "\n# of invs: " + invs.size)
     val validInvs = invs.filter({
       inv =>
-        val wlps = PredTrans.wlpProg(graph, inv, root, loc, z3Solver)
-        wlps.get(root) match {
+        PredTrans.wlpProg(graph, inv, root, loc, z3Solver).get(root) match {
           case Some(wlp) =>
-            val implication = {
-              if (root == loc) z3Solver.mkImplies(inv, wlp)
-              else if (roots.contains(root)) z3Solver.mkImplies(z3Solver.mkTrue(), wlp)
-              else z3Solver.mkTrue()
-            }
+            val implication = z3Solver.mkImplies(z3Solver.mkTrue(), wlp)
             val res = Invariant.checkForall(implication, allVars, z3Solver)
             // TODO: Check the validity inside loops
             // println(root.getId, loc.getId, root == loc, roots.contains(root))
-            // if (!res._1) println(res)
+            if (!res._1) {
+              println(inv)
+              println(res)
+              println()
+            }
             res._1
           case None => false
         }

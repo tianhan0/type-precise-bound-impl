@@ -26,6 +26,54 @@ object PredTrans {
   val DEBUG_WLP_PROG = DEBUG
   val DEBUG_WLP_BLOCK = false
 
+  // Find the branching condition under which block succ will be executed
+  def getCond(condBlock: ConditionalBlock, succ: Block, graph: Graph[Block, DefaultEdge], z3Solver: Z3Solver): Expr = {
+    // Find the branching condition. The branching block must only have one predecessor
+    // Please make sure that results of function invocation are assigned to variables (instead of being directly used),
+    // because function invocation will always lead to the generation of an exception handling block
+    def getBranchCond(block: ConditionalBlock, graph: Graph[Block, DefaultEdge], z3Solver: Z3Solver): BoolExpr = {
+      val inEdges = graph.incomingEdgesOf(block).asScala
+      if (inEdges.isEmpty) return z3Solver.mkTrue()
+      assert(inEdges.size == 1, "Conditional block " + block.getId + "'s incoming edges are: " + inEdges.toString())
+      graph.getEdgeSource(inEdges.head) match {
+        case reg: RegularBlock =>
+          reg.getContents.asScala.last.getTree match {
+            case expTree: ExpressionTree => transExpr(expTree, z3Solver).asInstanceOf[BoolExpr]
+            case x@_ =>
+              if (x.toString.contains("assertionsEnabled")) z3Solver.mkTrue()
+              else {
+                assert(false, "Unexpected loop conditional: " + x.toString)
+                z3Solver.mkTrue()
+              }
+          }
+        /*case exp: ExceptionBlock =>
+          val incomingEdges2 = graph.incomingEdgesOf(exp).asScala
+          assert(incomingEdges2.size == 1)
+          graph.getEdgeSource(incomingEdges2.head) match {
+            case reg2: RegularBlock =>
+              reg2.getContents.asScala.last.getTree match {
+                case expTree: ExpressionTree => transExpr(expTree, z3Solver).asInstanceOf[BoolExpr]
+                case x@_ => assert(false, x); z3Solver.mkTrue()
+              }
+            case x@_ => assert(false, x); z3Solver.mkTrue()
+          }*/
+        case x@_ => assert(false, x.getId + "=>" + block.getId); z3Solver.mkTrue()
+      }
+    }
+
+    val cond = getBranchCond(condBlock, graph, z3Solver)
+    if (condBlock.getThenSuccessor == succ) {
+      cond
+    }
+    else if (condBlock.getElseSuccessor == succ) {
+      z3Solver.mkNot(cond)
+    }
+    else {
+      assert(false)
+      z3Solver.mkTrue()
+    }
+  }
+
   // Compute the weakest precondition of a given predicate over a given AST node (representing basic statements, instead of compound statements)
   def wlpBasic(tree: Tree, pred: BoolExpr, z3Solver: Z3Solver): BoolExpr = {
     tree match {
@@ -125,7 +173,7 @@ object PredTrans {
     // Never modify the input graph
     val graphp = GraphUtil.cloneGraph(graph)
 
-    // Remove all outgoing edges from the input node
+    // Remove all outgoing edges from the exit node
     // Reference: https://github.com/jgrapht/jgrapht/issues/767
     graphp.removeAllEdges(graphp.outgoingEdgesOf(exit).asScala.toList.asJava)
 
@@ -236,7 +284,9 @@ object PredTrans {
           val node = nodes.head
           val outgoingEdges = sccCds.outgoingEdgesOf(scc).asScala
           outgoingEdges.size match {
-            case 0 => acc2 + (node -> pred)
+            case 0 =>
+              val wlp = wlpBlock(node, pred, z3Solver)
+              acc2 + (node -> wlp)
             case 1 =>
               val nxtSCC = sccCds.getEdgeTarget(outgoingEdges.head)
               val nxtBlk = {
@@ -253,16 +303,13 @@ object PredTrans {
                   val wlp = wlpBlock(node, p_, z3Solver)
                   node match {
                     case node_p: ConditionalBlock =>
-                      // If node is a branching w/ one successor outside of scc,
+                      // If node is a branching w/ one successor outside of graphp,
                       // then strengthen the wlp with the conditional
-                      val cond = getBranchCond(node_p, graphp, z3Solver)
-                      val tgtNodes =
-                        graphp.outgoingEdgesOf(node_p).asScala
-                          .map(e => graphp.getEdgeSource(e))
-                          .filter(n => scc.containsVertex(n))
+                      val tgtNodes = graphp.outgoingEdgesOf(node_p).asScala.map(e => graphp.getEdgeTarget(e))
                       assert(tgtNodes.size == 1)
-                      val cond_p = if (tgtNodes.head == node_p.getThenSuccessor) cond else z3Solver.mkNot(cond)
-                      acc2 + (node -> z3Solver.mkImplies(cond_p, wlp))
+                      // println(node_p.getId, tgtNodes.map(n => n.getId))
+                      val cond = getCond(node_p, tgtNodes.head, graphp, z3Solver)
+                      acc2 + (node -> z3Solver.mkImplies(cond, wlp))
                     case _ => acc2 + (node -> wlp)
                   }
                 case None => assert(false, "Next block is " + nxtBlk.getId); acc2
@@ -270,8 +317,6 @@ object PredTrans {
             case 2 =>
               assert(node.isInstanceOf[ConditionalBlock])
               val asCondBlk = node.asInstanceOf[ConditionalBlock]
-              val cond = getBranchCond(asCondBlk, graphp, z3Solver)
-
               val (thenNode, elseNode) = {
                 val blkOutgoingEdges = graphp.outgoingEdgesOf(node).asScala
                 val n1 = graphp.getEdgeTarget(blkOutgoingEdges.head)
@@ -296,11 +341,13 @@ object PredTrans {
                 println("Else Node: " + elseNode.getId)
               }
 
+              val thenCond = getCond(asCondBlk, thenNode, graphp, z3Solver)
+              val elseCond = getCond(asCondBlk, elseNode, graphp, z3Solver)
               (acc2.get(thenNode), acc2.get(elseNode)) match {
                 case (Some(p1), Some(p2)) =>
                   val wlp = z3Solver.mkAnd(
-                    z3Solver.mkImplies(cond, p1),
-                    z3Solver.mkImplies(z3Solver.mkNot(cond), p2)
+                    z3Solver.mkImplies(thenCond, p1),
+                    z3Solver.mkImplies(elseCond, p2)
                   )
                   acc2 + (node -> wlp)
                 case _ => assert(false, "Then node is " + thenNode.getId + ". Else node is " + elseNode.getId); acc2
@@ -319,9 +366,11 @@ object PredTrans {
               pred: BoolExpr,
               z3Solver: Z3Solver): BoolExpr = {
     assert(loopHead.isInstanceOf[ConditionalBlock], loopHead.toString)
+    val headAsCond = loopHead.asInstanceOf[ConditionalBlock]
+
     val loopBlks = loopBody.vertexSet().asScala
     if (DEBUG_WLP_LOOP) {
-      println("\n\n\nInfer WLP before loop " + loopBlks.map(b => b.getId) + " with loop head at block " + loopHead.getId + " with post-condition " + pred)
+      println("\n\n\nInfer WLP before loop " + loopBlks.map(b => b.getId) + " with loop head at block " + headAsCond.getId + " with post-condition " + pred)
     }
 
     // Get all assigned variables
@@ -339,8 +388,6 @@ object PredTrans {
         })
     }).toArray
 
-    val branching = getBranchCond(loopHead.asInstanceOf[ConditionalBlock], loopBody, z3Solver)
-
     // if (DEBUG_WLP_LOOP) println("Assigned vars: " + assignedVars)
     // if (DEBUG_WLP_LOOP) println("Loop condition: " + branching)
 
@@ -349,14 +396,14 @@ object PredTrans {
     val exitBlk: SpecialBlock = new SpecialBlockImpl(SpecialBlockType.EXIT)
     newGraph.addVertex(exitBlk)
     // Break the loop by replacing all edges ending up at loop head with ending up at an empty exit block
-    val backEdges = newGraph.incomingEdgesOf(loopHead).asScala.toList
+    val backEdges = newGraph.incomingEdgesOf(headAsCond).asScala.toList
     val exitNodes = backEdges.map(e => newGraph.getEdgeSource(e))
     exitNodes.foreach(n => newGraph.addEdge(n, exitBlk))
     newGraph.removeAllEdges(backEdges.asJava)
 
     val loopBodyWlp = {
-      val wlps = wlpProg(newGraph, pred, loopHead, exitBlk, z3Solver)
-      wlps.get(loopHead) match {
+      val wlps = wlpProg(newGraph, pred, headAsCond, exitBlk, z3Solver)
+      wlps.get(headAsCond) match {
         case Some(p_) => p_
         case None => assert(false); z3Solver.mkFalse()
       }
@@ -364,12 +411,14 @@ object PredTrans {
 
     val body: Expr = {
       val loopCond = {
-        val thenNode = loopHead.asInstanceOf[ConditionalBlock].getThenSuccessor
-        val elseNode = loopHead.asInstanceOf[ConditionalBlock].getElseSuccessor
-        if (loopBlks.contains(thenNode)) branching
+        val thenNode = headAsCond.getThenSuccessor
+        val elseNode = headAsCond.getElseSuccessor
+        val thenCond = getCond(headAsCond, thenNode, loopBody, z3Solver)
+        val elseCond = getCond(headAsCond, elseNode, loopBody, z3Solver)
+        if (loopBlks.contains(thenNode)) thenCond
         else {
           assert(loopBlks.contains(elseNode))
-          z3Solver.mkNot(branching)
+          elseCond
         }
       }
       val body = z3Solver.mkAnd(
@@ -409,39 +458,6 @@ object PredTrans {
     val ret = z3Solver.mkAnd(loopInv, body)
     if (DEBUG_WLP_LOOP && DEBUG_SMTLIB) println("WLP before the loop: " + ret)
     ret
-  }
-
-  // Find the branching condition. The branching block must only have one predecessor
-  // Please make sure that results of function invocation are assigned to variables (instead of being directly used),
-  // because function invocation will always lead to the generation of an exception handling block
-  def getBranchCond(block: ConditionalBlock, graph: Graph[Block, DefaultEdge], z3Solver: Z3Solver): BoolExpr = {
-    val incomingEdges = graph.incomingEdgesOf(block).asScala
-    if (incomingEdges.isEmpty) return z3Solver.mkTrue()
-    assert(incomingEdges.size == 1, "Conditional block " + block.getId + "'s incoming edges are: " + incomingEdges.toString())
-    graph.getEdgeSource(incomingEdges.head) match {
-      case reg: RegularBlock =>
-        reg.getContents.asScala.last.getTree match {
-          case expTree: ExpressionTree => transExpr(expTree, z3Solver).asInstanceOf[BoolExpr]
-          case x@_ =>
-            if (x.toString.contains("assertionsEnabled")) z3Solver.mkTrue()
-            else {
-              assert(false, "Unexpected loop conditional: " + x.toString)
-              z3Solver.mkTrue()
-            }
-        }
-      /*case exp: ExceptionBlock =>
-        val incomingEdges2 = graph.incomingEdgesOf(exp).asScala
-        assert(incomingEdges2.size == 1)
-        graph.getEdgeSource(incomingEdges2.head) match {
-          case reg2: RegularBlock =>
-            reg2.getContents.asScala.last.getTree match {
-              case expTree: ExpressionTree => transExpr(expTree, z3Solver).asInstanceOf[BoolExpr]
-              case x@_ => assert(false, x); z3Solver.mkTrue()
-            }
-          case x@_ => assert(false, x); z3Solver.mkTrue()
-        }*/
-      case x@_ => assert(false, x.getId + "=>" + block.getId); z3Solver.mkTrue()
-    }
   }
 
   // If there is no parent tree of this expression tree succeeding it in the same basic block
