@@ -5,7 +5,7 @@ import com.microsoft.z3.{BoolExpr, Expr, IntExpr}
 import com.sun.source.tree.MethodTree
 import javax.lang.model.`type`.{TypeKind, TypeMirror}
 import org.checkerframework.dataflow.cfg.block.SpecialBlock.SpecialBlockType
-import org.checkerframework.dataflow.cfg.block.{Block, SpecialBlockImpl}
+import org.checkerframework.dataflow.cfg.block.{Block, ConditionalBlock, SpecialBlockImpl}
 import org.checkerframework.javacutil.TreeUtils
 import org.jgrapht.Graph
 import org.jgrapht.graph.DefaultEdge
@@ -26,7 +26,8 @@ object Invariant {
 
   var TOTAL_TIME: Double = 0
 
-  var dp = List[(InvGuess, Set[BoolExpr])]()
+  var dp1 = List[(InvGuess, Set[BoolExpr])]()
+  var dp2 = List[(LoopInvGuess, Set[BoolExpr])]()
 
   def inferInv(loc: Block,
                graph: Graph[Block, DefaultEdge],
@@ -35,9 +36,9 @@ object Invariant {
                indent: Int = 0): Set[BoolExpr] = {
     val start = System.nanoTime()
     val invGuess = InvGuess(loc, graph)
-    dp.foreach({
-      case (invGuessp, inv) =>
-        if (invGuessp.equals(invGuess)) {
+    dp1.foreach({
+      case (invGuess_p, inv) =>
+        if (invGuess_p.equals(invGuess)) {
           // println("!!!!!!!!!!!!!!!")
           return inv
         }
@@ -51,8 +52,10 @@ object Invariant {
     if (DEBUG_LOCAL_INV) println("\n\n\n" + indentStr + "---Infer invariant right after block " + loc.getId + " started:")
 
     val allVars = vars.allVars
-    val invs = genOctagonInv(allVars, z3Solver)
-    // TODO: Generate arbitrary conjunction of the above invariants
+    // Generate arbitrary conjunction of the above invariants
+    val invs: Set[BoolExpr] = genOctagonInv(allVars, z3Solver).subsets()
+      .filter(set => set.size <= 3)
+      .map(set => Invariant.getConjunction(set, z3Solver)).toSet
 
     if (DEBUG_GEN_NEW_INV) println("# of vars: " + allVars.size + "\n# of invs: " + invs.size)
     val validInvs = invs.filter({
@@ -97,22 +100,60 @@ object Invariant {
       println(indentStr + "---Valid invariants are: " + validInvs.foldLeft("\n")((acc, b) => acc + indentStr + "  " + b + "\n"))
     }
 
-    dp = (InvGuess(loc, graph), validInvs) :: dp
+    dp1 = (invGuess, validInvs) :: dp1
     val end = System.nanoTime()
     TOTAL_TIME += (end - start).toDouble / Utils.NANO
 
     validInvs
   }
 
-  def inferLoopInv(loopHead: Block,
+  def inferLoopInv(loopHead: ConditionalBlock,
+                   loopCond: Expr,
                    graph: Graph[Block, DefaultEdge],
                    vars: Vars,
                    z3Solver: Z3Solver,
                    indent: Int = 0): Set[BoolExpr] = {
-    val allVars = vars.allVars
-    val invs = genOctagonInv(allVars, z3Solver)
+    val invGuess = LoopInvGuess(loopHead, loopCond, graph)
+    dp2.foreach({
+      case (invGuess_p, inv) =>
+        if (invGuess_p.equals(invGuess)) {
+          return inv
+        }
+    })
 
-    HashSet[BoolExpr](z3Solver.mkTrue()) // TODO: Stronger loop invariant
+    val newGraph = GraphUtil.cloneGraph(graph)
+    val exitBlk = new SpecialBlockImpl(SpecialBlockType.EXIT)
+    newGraph.addVertex(exitBlk)
+    val backEdges = newGraph.incomingEdgesOf(loopHead).asScala.toList
+    val exitNodes = backEdges.map(e => newGraph.getEdgeSource(e))
+    exitNodes.foreach(n => newGraph.addEdge(n, exitBlk))
+    newGraph.removeAllEdges(backEdges.asJava)
+
+    val allVars = vars.allVars
+    val invs = genOctagonInv(allVars, z3Solver).subsets()
+      .filter(set => set.size <= 1)
+      .map(set => Invariant.getConjunction(set, z3Solver)).toSet
+
+    val validInvs = invs.filter({
+      inv =>
+        PredTrans.wlpProg(newGraph, inv, loopHead, exitBlk, vars, z3Solver).get(loopHead) match {
+          case Some(wlp) =>
+            val implication = z3Solver.mkImplies(z3Solver.mkAnd(loopCond, inv), wlp)
+            val r = Invariant.checkForall(implication, allVars, z3Solver)
+            /*if (!r1._1) {
+              println(inv)
+              println(r1)
+              println()
+            }*/
+            r._1
+          case None => false
+        }
+    })
+
+    dp2 = (invGuess, validInvs) :: dp2
+
+    // println(validInvs)
+    validInvs
   }
 
   def getTyp(typ: TypeMirror): TypeKind = {
@@ -144,7 +185,7 @@ object Invariant {
                         (acc2, c2) =>
                           constants.foldLeft(acc2)({
                             (acc3, c3) =>
-                              if (c1 < 0 && c2 < 0) acc3
+                              if (c1 * c2 > 0) acc3
                               else {
                                 val add = z3Solver.mkAdd(
                                   if (c1 == 1) var1 else z3Solver.mkMul(z3Solver.mkIntVal(c1), var1),
@@ -274,7 +315,7 @@ object Invariant {
     (!res, toCheck)
   }
 
-  def getConjunction(invs: Iterable[BoolExpr], z3Solver: Z3Solver): Expr = {
+  def getConjunction(invs: Iterable[BoolExpr], z3Solver: Z3Solver): BoolExpr = {
     if (invs.isEmpty) z3Solver.mkTrue()
     else if (invs.size == 1) invs.head
     else z3Solver.mkAnd(invs.toSeq: _*)
@@ -290,6 +331,19 @@ case class InvGuess(loc: Block, graph: Graph[Block, DefaultEdge]) {
         val r1 = loc == guess.loc
         val r2 = GraphUtil.isSameGraph(graph, guess.graph)
         r1 && r2
+      case _ => false
+    }
+  }
+}
+
+case class LoopInvGuess(loopHead: ConditionalBlock, loopCond: Expr, graph: Graph[Block, DefaultEdge]) {
+  override def equals(obj: Any): Boolean = {
+    obj match {
+      case guess: LoopInvGuess =>
+        val r1 = loopHead == guess.loopHead
+        var r2 = loopCond.toString == guess.loopCond.toString
+        val r3 = GraphUtil.isSameGraph(graph, guess.graph)
+        r1 && r2 && r3
       case _ => false
     }
   }

@@ -233,10 +233,20 @@ object PredTrans {
             loopHeads.head
           }
 
+          val loopCond = {
+            val outgoingEdges = graphp.outgoingEdgesOf(loopHead).asScala
+            val tgtNodesInSCC =
+              outgoingEdges
+                .filter(e => scc.containsVertex(graphp.getEdgeTarget(e)))
+                .map(e => graphp.getEdgeTarget(e))
+            assert(tgtNodesInSCC.size == 1)
+            getCond(loopHead.asInstanceOf[ConditionalBlock], tgtNodesInSCC.head, graphp, z3Solver)
+          }
+
           // Find loop invariant
           val loopInv = {
-            Invariant.inferLoopInv(loopHead, scc, vars, z3Solver).head
-          } // TODO: Stronger loop invariant
+            Invariant.inferLoopInv(loopHead.asInstanceOf[ConditionalBlock], loopCond, scc, vars, z3Solver).head
+          } // TODO: Pick the right loop invariant
 
           // Compute the wlp at loop head
           val postPred = {
@@ -398,7 +408,7 @@ object PredTrans {
 
     // Find the weakest precondition when executing the loop body once
     val newGraph = GraphUtil.cloneGraph(loopBody)
-    val exitBlk: SpecialBlock = new SpecialBlockImpl(SpecialBlockType.EXIT)
+    val exitBlk = new SpecialBlockImpl(SpecialBlockType.EXIT)
     newGraph.addVertex(exitBlk)
     // Break the loop by replacing all edges ending up at loop head with ending up at an empty exit block
     val backEdges = newGraph.incomingEdgesOf(headAsCond).asScala.toList
