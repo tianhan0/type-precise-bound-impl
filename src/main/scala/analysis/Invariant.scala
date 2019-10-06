@@ -21,7 +21,7 @@ object Invariant {
   val DEBUG_SMTLIB = false
   val DEBUG_LOOP_TRAVERSE = false
   val DEBUG_LOCAL_INV = false
-  val DEBUG_GEN_NEW_INV = false
+  val DEBUG_GEN_NEW_INV = true
   private val INVS_TO_DEBUG = HashSet("(<= (+ (* (- 1) i) R1) 0)")
 
   val MAX_NUM_OF_INV = 3
@@ -57,11 +57,16 @@ object Invariant {
 
     val allVars = vars.allVars
     // Generate arbitrary conjunction of the above invariants
-    val invs: Set[BoolExpr] = genOctagonInv(allVars, z3Solver).subsets()
+    val allInvs: Set[BoolExpr] = genOctagonInv(allVars, z3Solver).subsets()
       .filter(set => set.size <= MAX_NUM_OF_INV)
       .map(set => Invariant.getConjunction(set, z3Solver)).toSet
+    val invs = {
+      val invs = removeFalseInvs(allInvs, allVars, z3Solver)
+      // removeWeakInvs(invs, allVars, z3Solver)
+      invs
+    }
 
-    if (DEBUG_GEN_NEW_INV) println("# of vars: " + allVars.size + "\n# of invs: " + invs.size)
+    if (DEBUG_GEN_NEW_INV) println("[Inv] # of vars: " + allVars.size + "\n# of invs: " + invs.size)
     val validInvs = invs.filter({
       inv =>
         PredTrans.wlpProg(graph, inv, root, loc, vars, z3Solver).get(root) match {
@@ -108,7 +113,8 @@ object Invariant {
     val end = System.nanoTime()
     TOTAL_TIME_INV += (end - start).toDouble / Utils.NANO
 
-    Invariant.removeWeakInvs(validInvs, allVars, z3Solver)
+    // Invariant.removeWeakInvs(validInvs, allVars, z3Solver)
+    validInvs
   }
 
   def inferLoopInv(loopHead: ConditionalBlock,
@@ -135,19 +141,25 @@ object Invariant {
     newGraph.removeAllEdges(backEdges.asJava)
 
     val allVars = vars.allVars
-    val invs = genOctagonInv(allVars, z3Solver).subsets()
+    val allInvs = genOctagonInv(allVars, z3Solver).subsets()
       .filter(set => set.size <= MAX_NUM_OF_LOOP_INV)
       .map(set => Invariant.getConjunction(set, z3Solver)).toSet
+    val invs = {
+      val invs = removeFalseInvs(allInvs, allVars, z3Solver)
+      // removeWeakInvs(invs, allVars, z3Solver)
+      invs
+    }
 
+    if (DEBUG_GEN_NEW_INV) println("[LoopInv] # of vars: " + allVars.size + "\n# of invs: " + invs.size)
     val validInvs = invs.filter({
       inv =>
         PredTrans.wlpProg(newGraph, inv, loopHead, exitBlk, vars, z3Solver).get(loopHead) match {
           case Some(wlp) =>
             val implication = z3Solver.mkImplies(z3Solver.mkAnd(loopCond, inv), wlp)
             val r = Invariant.checkForall(implication, allVars, z3Solver)
-            /*if (!r1._1) {
+            /*if (!r._1) {
               println(inv)
-              println(r1)
+              println(r)
               println()
             }*/
             r._1
@@ -159,7 +171,8 @@ object Invariant {
     val end = System.nanoTime()
     TOTAL_TIME_LOOP_INV += (end - start).toDouble / Utils.NANO
 
-    Invariant.removeWeakInvs(validInvs, allVars, z3Solver)
+    // Invariant.removeWeakInvs(validInvs, allVars, z3Solver)
+    validInvs
   }
 
   def getTyp(typ: TypeMirror): TypeKind = {
@@ -332,10 +345,23 @@ object Invariant {
     Utils.printYellowString("Loop invariant inference's total time is: " + ("%.3f" format TOTAL_TIME_LOOP_INV) + "s")
   }
 
+  def removeFalseInvs(invs: Set[BoolExpr], allVars: Set[Expr], z3Solver: Z3Solver): Set[BoolExpr] = {
+    // If an guessed invariant is equivalent to false (i.e. there does not exist a program state
+    // that satisfies it), then any reasoning afterwards does not make sense
+    val ret = invs.filter({
+      inv =>
+        val exists = z3Solver.mkExists(allVars.toArray, inv)
+        z3Solver.checkSAT(exists)
+    })
+    Utils.printYellowString("[Remove false predicates] We reduced the # of predicates from " + invs.size + " to " + ret.size)
+    ret
+  }
+
   def removeWeakInvs(invs: Set[BoolExpr], allVars: Set[Expr], z3Solver: Z3Solver): Set[BoolExpr] = {
     val NUM_OF_MAX_ITER = 50
     var ret = invs
-    def printResult(): Unit = Utils.printYellowString("We reduced the # of predicates from " + invs.size + " to " + ret.size + " by removing weaker predicates")
+
+    def printResult(): Unit = Utils.printYellowString("[Remove weak predicates] We reduced the # of predicates from " + invs.size + " to " + ret.size)
 
     var i = 0
     while (i < NUM_OF_MAX_ITER) {
@@ -344,18 +370,26 @@ object Invariant {
         pair =>
           val inv1 = pair.head
           val inv2 = pair.tail.head
-          val implication = z3Solver.mkImplies(inv1, inv2)
-          val r = Invariant.checkForall(implication, allVars, z3Solver)
-          if (r._1) toRemove = Some(inv2)
-          r._1
-      })
-      toRemove match {
-        case Some(inv) =>
-          ret = ret.-(inv)
+          if (inv1.toString != inv2.toString) {
+            val implication = z3Solver.mkImplies(inv1, inv2)
+            val r = Invariant.checkForall(implication, allVars, z3Solver)
+            if (r._1) {
+              // println(r._1, r._2)
+              toRemove = Some(inv2)
+            }
+            r._1
+          }
+          else false
+      }) match {
+        case Some(pair) =>
+          val toRemove = pair.tail.head
+          // println(ret.-(toRemove).size, ret.size, toRemove)
+          ret = ret.-(toRemove)
         case None =>
           printResult()
           return ret
       }
+
       i = i + 1
     }
     printResult()
