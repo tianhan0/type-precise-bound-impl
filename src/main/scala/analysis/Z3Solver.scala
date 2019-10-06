@@ -13,6 +13,7 @@ class Z3Solver {
   val ctx: Context = new Context
   var vars: Map[String, Expr] = new HashMap[String, Expr]
   val DEBUG: Boolean = false
+  var queries = new HashMap[String, Boolean]
 
   val solver: Solver = {
     // cxt.setPrintMode(Z3_PRINT_LOW_LEVEL)
@@ -32,7 +33,7 @@ class Z3Solver {
 
   def applyLenFun(expr: Expr): Expr = mkLenFun(expr.getSort).apply(expr)*/
 
-  def checkSAT: Boolean = {
+  private def checkSAT: Boolean = {
     val start = System.nanoTime()
     val res = interpretSolverOutput(solver.check)
     val end = System.nanoTime()
@@ -42,12 +43,17 @@ class Z3Solver {
     res
   }
 
-  def checkSAT(asts: AST*): Boolean = {
-    push()
-    asts.foreach(ast => mkAssert(ast))
-    val res = checkSAT
-    pop()
-    res
+  def checkSAT(ast: AST): Boolean = {
+    queries.get(ast.toString) match {
+      case Some(res) => res
+      case None =>
+        push()
+        mkAssert(ast)
+        val res = checkSAT
+        pop()
+        queries = queries + (ast.toString -> res)
+        res
+    }
   }
 
   /**
