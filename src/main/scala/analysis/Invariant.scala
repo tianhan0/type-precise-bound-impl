@@ -24,7 +24,11 @@ object Invariant {
   val DEBUG_GEN_NEW_INV = false
   private val INVS_TO_DEBUG = HashSet("(<= (+ (* (- 1) i) R1) 0)")
 
-  var TOTAL_TIME: Double = 0
+  val MAX_NUM_OF_INV = 3
+  val MAX_NUM_OF_LOOP_INV = 2
+
+  var TOTAL_TIME_INV: Double = 0
+  var TOTAL_TIME_LOOP_INV: Double = 0
 
   var dp1 = List[(InvGuess, Set[BoolExpr])]()
   var dp2 = List[(LoopInvGuess, Set[BoolExpr])]()
@@ -54,7 +58,7 @@ object Invariant {
     val allVars = vars.allVars
     // Generate arbitrary conjunction of the above invariants
     val invs: Set[BoolExpr] = genOctagonInv(allVars, z3Solver).subsets()
-      .filter(set => set.size <= 3)
+      .filter(set => set.size <= MAX_NUM_OF_INV)
       .map(set => Invariant.getConjunction(set, z3Solver)).toSet
 
     if (DEBUG_GEN_NEW_INV) println("# of vars: " + allVars.size + "\n# of invs: " + invs.size)
@@ -102,9 +106,9 @@ object Invariant {
 
     dp1 = (invGuess, validInvs) :: dp1
     val end = System.nanoTime()
-    TOTAL_TIME += (end - start).toDouble / Utils.NANO
+    TOTAL_TIME_INV += (end - start).toDouble / Utils.NANO
 
-    validInvs
+    Invariant.removeWeakInvs(validInvs, allVars, z3Solver)
   }
 
   def inferLoopInv(loopHead: ConditionalBlock,
@@ -113,6 +117,7 @@ object Invariant {
                    vars: Vars,
                    z3Solver: Z3Solver,
                    indent: Int = 0): Set[BoolExpr] = {
+    val start = System.nanoTime()
     val invGuess = LoopInvGuess(loopHead, loopCond, graph)
     dp2.foreach({
       case (invGuess_p, inv) =>
@@ -131,7 +136,7 @@ object Invariant {
 
     val allVars = vars.allVars
     val invs = genOctagonInv(allVars, z3Solver).subsets()
-      .filter(set => set.size <= 1)
+      .filter(set => set.size <= MAX_NUM_OF_LOOP_INV)
       .map(set => Invariant.getConjunction(set, z3Solver)).toSet
 
     val validInvs = invs.filter({
@@ -151,9 +156,10 @@ object Invariant {
     })
 
     dp2 = (invGuess, validInvs) :: dp2
+    val end = System.nanoTime()
+    TOTAL_TIME_LOOP_INV += (end - start).toDouble / Utils.NANO
 
-    // println(validInvs)
-    validInvs
+    Invariant.removeWeakInvs(validInvs, allVars, z3Solver)
   }
 
   def getTyp(typ: TypeMirror): TypeKind = {
@@ -321,7 +327,40 @@ object Invariant {
     else z3Solver.mkAnd(invs.toSeq: _*)
   }
 
-  def printTime(): Unit = Utils.printRedString("Invariant inference's total time is: " + ("%.3f" format TOTAL_TIME) + "s")
+  def printTime(): Unit = {
+    Utils.printYellowString("Invariant inference's total time is: " + ("%.3f" format TOTAL_TIME_INV) + "s")
+    Utils.printYellowString("Loop invariant inference's total time is: " + ("%.3f" format TOTAL_TIME_LOOP_INV) + "s")
+  }
+
+  def removeWeakInvs(invs: Set[BoolExpr], allVars: Set[Expr], z3Solver: Z3Solver): Set[BoolExpr] = {
+    val NUM_OF_MAX_ITER = 50
+    var ret = invs
+    def printResult(): Unit = Utils.printYellowString("We reduced the # of predicates from " + invs.size + " to " + ret.size + " by removing weaker predicates")
+
+    var i = 0
+    while (i < NUM_OF_MAX_ITER) {
+      var toRemove: Option[BoolExpr] = None
+      Utils.crossJoin(ret :: ret :: List[Set[BoolExpr]]()).find({
+        pair =>
+          val inv1 = pair.head
+          val inv2 = pair.tail.head
+          val implication = z3Solver.mkImplies(inv1, inv2)
+          val r = Invariant.checkForall(implication, allVars, z3Solver)
+          if (r._1) toRemove = Some(inv2)
+          r._1
+      })
+      toRemove match {
+        case Some(inv) =>
+          ret = ret.-(inv)
+        case None =>
+          printResult()
+          return ret
+      }
+      i = i + 1
+    }
+    printResult()
+    ret
+  }
 }
 
 case class InvGuess(loc: Block, graph: Graph[Block, DefaultEdge]) {
