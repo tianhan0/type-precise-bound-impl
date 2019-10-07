@@ -61,12 +61,13 @@ object Invariant {
       .filter(set => set.size <= MAX_NUM_OF_INV)
       .map(set => Invariant.getConjunction(set, z3Solver)).toSet
     val invs = {
-      val invs = removeFalseInvs(allInvs, allVars, z3Solver)
+      // val invs = removeFalseInvs(allInvs, allVars, z3Solver)
       // removeWeakInvs(invs, allVars, z3Solver)
-      invs
+      // TODO: Only guess invariants about variables used or defined in the current program? Not sufficient for the Zulger example
+      allInvs
     }
 
-    if (DEBUG_GEN_NEW_INV) println("[Inv] # of vars: " + allVars.size + "\n# of invs: " + invs.size)
+    if (DEBUG_GEN_NEW_INV) println("[Inv] # of vars: " + allVars.size + "; # of invs: " + invs.size)
     val validInvs = invs.filter({
       inv =>
         PredTrans.wlpProg(graph, inv, root, loc, vars, z3Solver).get(root) match {
@@ -145,12 +146,12 @@ object Invariant {
       .filter(set => set.size <= MAX_NUM_OF_LOOP_INV)
       .map(set => Invariant.getConjunction(set, z3Solver)).toSet
     val invs = {
-      val invs = removeFalseInvs(allInvs, allVars, z3Solver)
+      // val invs = removeFalseInvs(allInvs, allVars, z3Solver)
       // removeWeakInvs(invs, allVars, z3Solver)
-      invs
+      allInvs
     }
 
-    if (DEBUG_GEN_NEW_INV) println("[LoopInv] # of vars: " + allVars.size + "\n# of invs: " + invs.size)
+    if (DEBUG_GEN_NEW_INV) println("[LoopInv] # of vars: " + allVars.size + "; # of invs: " + invs.size)
     val validInvs = invs.filter({
       inv =>
         PredTrans.wlpProg(newGraph, inv, loopHead, exitBlk, vars, z3Solver).get(loopHead) match {
@@ -284,6 +285,19 @@ object Invariant {
     rhses.foldLeft(new HashSet[BoolExpr])((acc, rhs) => acc + z3Solver.mkLe(sumR, rhs))
   }
 
+  def varsToExprs(vars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Set[Expr] = {
+    vars.foldLeft(new HashSet[Expr])({
+      case (acc, (name, typ)) =>
+        val variable = if (typ.getKind == TypeKind.INT) z3Solver.mkIntVar(name)
+        else if (typ.getKind == TypeKind.BOOLEAN) z3Solver.mkBoolVar(name)
+        else {
+          assert(false)
+          z3Solver.mkFalse()
+        }
+        acc + variable
+    })
+  }
+
   def getMethodVars(methodTree: MethodTree, allVars: Set[(String, TypeMirror)], z3Solver: Z3Solver): Vars = {
     val (args: Set[Expr], globVarNames: Set[String]) = methodTree.getParameters.asScala.foldLeft(HashSet[Expr](), HashSet(Utils.BOUND_STR))({
       (acc, variableTree) =>
@@ -345,6 +359,7 @@ object Invariant {
     Utils.printYellowString("Loop invariant inference's total time is: " + ("%.3f" format TOTAL_TIME_LOOP_INV) + "s")
   }
 
+  // Cause more unnecessary z3 queries
   def removeFalseInvs(invs: Set[BoolExpr], allVars: Set[Expr], z3Solver: Z3Solver): Set[BoolExpr] = {
     // If an guessed invariant is equivalent to false (i.e. there does not exist a program state
     // that satisfies it), then any reasoning afterwards does not make sense
@@ -357,6 +372,7 @@ object Invariant {
     ret
   }
 
+  // Cause more unnecessary z3 queries
   def removeWeakInvs(invs: Set[BoolExpr], allVars: Set[Expr], z3Solver: Z3Solver): Set[BoolExpr] = {
     val NUM_OF_MAX_ITER = 50
     var ret = invs

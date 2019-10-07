@@ -441,7 +441,7 @@ object PredTrans {
         z3Solver.mkImplies(z3Solver.mkAnd(z3Solver.mkNot(loopCond), loopInv), pred)
       )
       if (assignedVars.nonEmpty) {
-        val vars = assignedVars.foldLeft((List[Expr](), List[Expr]()))({
+        val varsToSubstitute = assignedVars.foldLeft((List[Expr](), List[Expr]()))({
           case (acc, (name: String, typ: TypeMirror)) =>
             val freshName = {
               var r = Utils.genRandStr()
@@ -462,8 +462,8 @@ object PredTrans {
             }
         })
         z3Solver.mkForall(
-          vars._2.toArray,
-          body.substitute(vars._1.toArray, vars._2.toArray)
+          varsToSubstitute._2.toArray,
+          body.substitute(varsToSubstitute._1.toArray, varsToSubstitute._2.toArray)
         )
       }
       else {
