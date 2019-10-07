@@ -4,7 +4,7 @@
 abstract public class ReplaceTagsBuilderHelper {
     abstract int rand();
 
-    void replaceTagsBuilderHelper(int len, int rand1, int rand2) {
+    void replaceTagsBuilderHelper(int len, int rand) {
         int R1 = 0;
         // int R2 = 0;
         int linePointer = 0; // keep track of where we are on the text string
@@ -12,15 +12,15 @@ abstract public class ReplaceTagsBuilderHelper {
         int endTagLocation = 0;
         int k = 0;
         while (endTagLocation < len) {
-            startTagLocation = endTagLocation + rand1;
+            startTagLocation = endTagLocation + rand;
             k = startTagLocation - linePointer;
-            endTagLocation = startTagLocation + rand2;
+            endTagLocation = startTagLocation + rand;
             // R2 = R2 + val;
             // R1+R2<=endTagLocation
             linePointer = endTagLocation;
             R1 = linePointer; // also need endTagLocation<len here
         }
-        assert (rand1 >= 0 && rand2 >= 0) : "global";
+        assert (rand >= 0) : "global";
         assert (R1 <= len) : "bound";
         // R1 = R1+len-linePointer;
     }
