@@ -150,6 +150,10 @@ object GraphUtil {
 
   def hasCycle[V, E](graph: Graph[V, E]): Boolean = new CycleDetector(graph).detectCycles()
 
+  def isInCycle[V, E](node: V, graph: Graph[V, E]): Boolean = {
+    new CycleDetector(graph).findCyclesContainingVertex(node).asScala.nonEmpty
+  }
+
   def reverseTopological[V, E](graph: Graph[V, E]): List[V] = {
     var res = List[V]()
     val it = new TopologicalOrderIterator(graph)

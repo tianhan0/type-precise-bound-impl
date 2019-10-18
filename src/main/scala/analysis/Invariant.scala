@@ -33,6 +33,59 @@ object Invariant {
   var dp1 = List[(InvGuess, Set[BoolExpr])]()
   var dp2 = List[(LoopInvGuess, Set[BoolExpr])]()
 
+  def verifyInv(root: Block,
+                exit: Block,
+                graph: Graph[Block, DefaultEdge],
+                inv: BoolExpr,
+                vars: Vars,
+                z3Solver: Z3Solver): Boolean = {
+    val allVars = vars.allVars
+
+    // Base case
+    val r1 = PredTrans.wlpProg(graph, inv, root, exit, vars, z3Solver).get(root) match {
+      case Some(wlp) =>
+        val implication = z3Solver.mkImplies(z3Solver.mkTrue(), wlp)
+        val r1 = Invariant.checkForall(implication, allVars, z3Solver)
+        // println(root.getId, loc.getId, root == loc, roots.contains(root))
+        /*if (!r1._1) {
+          println(inv)
+          println(r1)
+          println()
+        }*/
+        r1._1
+      case None => false
+    }
+
+    // Inductive case (if node exit is in a cycle)
+    if (GraphUtil.isInCycle(exit, graph)) {
+      val newGraph = GraphUtil.cloneGraph(graph)
+      val newRoot = new SpecialBlockImpl(SpecialBlockType.ENTRY)
+      newGraph.addVertex(newRoot)
+      val outEdges = newGraph.outgoingEdgesOf(exit).asScala.toList
+      val succNodes = outEdges.map(e => newGraph.getEdgeTarget(e))
+      succNodes.foreach(n => newGraph.addEdge(newRoot, n))
+      newGraph.removeAllEdges(outEdges.asJava)
+
+      val r2 = PredTrans.wlpProg(newGraph, inv, newRoot, exit, vars, z3Solver).get(newRoot) match {
+        case Some(wlp2) =>
+          val implication = z3Solver.mkImplies(inv, wlp2)
+          val r2 = Invariant.checkForall(implication, allVars, z3Solver)
+          /*if (!r2._1) {
+            println(inv)
+            println(r2)
+            println()
+          }*/
+          r2._1
+        case None => false
+      }
+      r1 && r2
+    }
+    else {
+      r1
+    }
+    // TODO: Combine the two queries (for r1 and r2) into one?
+  }
+
   def inferInv(loc: Block,
                graph: Graph[Block, DefaultEdge],
                vars: Vars,
@@ -69,40 +122,7 @@ object Invariant {
 
     if (DEBUG_GEN_NEW_INV) println("[Inv] # of vars: " + allVars.size + "; # of invs: " + invs.size)
     val validInvs = invs.filter({
-      inv =>
-        PredTrans.wlpProg(graph, inv, root, loc, vars, z3Solver).get(root) match {
-          case Some(wlp) =>
-            val implication = z3Solver.mkImplies(z3Solver.mkTrue(), wlp)
-            val r1 = Invariant.checkForall(implication, allVars, z3Solver)
-            // println(root.getId, loc.getId, root == loc, roots.contains(root))
-            /*if (!r1._1) {
-              println(inv)
-              println(r1)
-              println()
-            }*/
-
-            val newGraph = GraphUtil.cloneGraph(graph)
-            val newRoot = new SpecialBlockImpl(SpecialBlockType.ENTRY)
-            newGraph.addVertex(newRoot)
-            val outEdges = newGraph.outgoingEdgesOf(loc).asScala.toList
-            val succNodes = outEdges.map(e => newGraph.getEdgeTarget(e))
-            succNodes.foreach(n => newGraph.addEdge(newRoot, n))
-            newGraph.removeAllEdges(outEdges.asJava)
-
-            PredTrans.wlpProg(newGraph, inv, newRoot, loc, vars, z3Solver).get(newRoot) match {
-              case Some(wlp2) =>
-                val implication = z3Solver.mkImplies(inv, wlp2)
-                val r2 = Invariant.checkForall(implication, allVars, z3Solver)
-                /*if (!r2._1) {
-                  println(inv)
-                  println(r2)
-                  println()
-                }*/
-                r1._1 && r2._1
-              case None => false
-            }
-          case None => false
-        }
+      inv => verifyInv(root, loc, graph, inv, vars, z3Solver)
     })
 
     if (DEBUG_LOCAL_INV) {
